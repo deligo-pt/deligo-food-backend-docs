@@ -67,6 +67,7 @@ deligo-docs/
 ## Known areas that could not be confirmed
 
 Stated explicitly in the relevant documents; consolidated here:
+
 - `IAuthUserModel.isUserExistsByContactNumber`'s implementation status in `authLookupPlugin.ts` was not re-verified line-by-line in this pass (the original audit flagged it as declared-but-unimplemented; not independently re-confirmed here).
 - Actual production values of `JWT_ACCESS_EXPIRES_IN`/`JWT_REFRESH_EXPIRES_IN` — only `.env.example` reference values (`7d`/`1y`) were available from a read-only repo pass.
 - Whether `loginHistory.utils.ts`'s `createLoginLog` export has any live caller beyond the confirmed BullMQ-worker path — not found called from `auth.service.ts`, but an exhaustive repo-wide grep for every import site wasn't separately run.
@@ -82,12 +83,12 @@ Stated explicitly in the relevant documents; consolidated here:
 ## Contradictions discovered (and corrected)
 
 - **`docs/order-flow-guide.md`** stated no automatic cron existed to mark uncollected self-pickup orders `NO_SHOW`. Current code (`src/app/cron/order.cron.ts`, `handleAutoNoShowCron`) contradicts this — the cron exists, is scheduled every 5 minutes, and is wired into `initAllCronJobs()`. **Corrected** in `03-modules/cart-checkout-order.md`, with the original guide's claim explicitly called out as superseded.
-- **`docs/architecture-audit.md`** describes `DeliGo_Balance`'s controller/service as "empty" — direct inspection found the module directory contains *only* the model/interface files; there are no controller/service/route files present at all (not empty files, absent files), and the route is additionally unmounted. This is a refinement, not a contradiction, and is reflected in `03-modules/loyalty-and-referrals.md` and `08-known-gaps/technical-debt-and-todos.md`.
+- **`docs/architecture-audit.md`** describes `DeliGo_Balance`'s controller/service as "empty" — direct inspection found the module directory contains _only_ the model/interface files; there are no controller/service/route files present at all (not empty files, absent files), and the route is additionally unmounted. This is a refinement, not a contradiction, and is reflected in `03-modules/loyalty-and-referrals.md` and `08-known-gaps/technical-debt-and-todos.md`.
 - No other direct contradictions between the architecture audit / existing guides and current source code were found — the audit and the four existing integration guides were, on the whole, accurate at the time of this pass.
 
 ## Items requiring human review
 
-- **`08-known-gaps/technical-debt-and-todos.md`** in full — every item there is confirmed-in-code, but the *suggested action* for each is a documentation-writer's judgment call, not a team decision. Particularly: whether `DeliGo_Balance`/`Coupon` should be built out or removed, and which `Analytics` implementation should be treated as canonical.
+- **`08-known-gaps/technical-debt-and-todos.md`** in full — every item there is confirmed-in-code, but the _suggested action_ for each is a documentation-writer's judgment call, not a team decision. Particularly: whether `DeliGo_Balance`/`Coupon` should be built out or removed, and which `Analytics` implementation should be treated as canonical.
 - **QA OTP bypass** (`TEST_CUSTOMER_*`) — flagged as a security-hygiene item; whether an explicit `NODE_ENV` guard should be added is a product/security decision, not purely technical.
 - **The `Order` route-shadowing concern** — recommend a quick manual verification (a live request to `GET /orders/delivery-partner/current-order`) before treating it as confirmed-broken or confirmed-fine.
 - **Vercel deployment status** — documented as "legacy/vestigial based on git-recency evidence," but this is an inference from commit history, not a statement from anyone on the team; worth a quick confirmation that `vercel.json` is indeed safe to ignore or remove.
