@@ -2,7 +2,7 @@
 
 ## Overview
 
-Covers the `Admin` profile module, the singleton `GlobalSettings` configuration document, the Analytics module's dual implementations, and the platform's administrative/compliance/logging modules (Agreement, Invoice, ActivityLog, ErrorLog, RequestLog/EmailLog, Sponsorships, ContactUs).
+Covers the `Admin` profile module, the singleton `GlobalSettings` configuration document, the Analytics module's dual implementations, and the platform's administrative/compliance/logging modules (Invoice, ActivityLog, ErrorLog, RequestLog/EmailLog, Sponsorships, ContactUs). The `Agreement` module — once a small admin-only e-signature tool — is now a substantial Vendor-Registration-integrated module with its own document: [`vendor-agreement.md`](vendor-agreement.md).
 
 ## Purpose
 
@@ -28,6 +28,7 @@ Singleton document (`GlobalSettingsSchema.index({}, {unique: true})` — enforce
 | `order` | `nearestVendorRadiusKm`, `cancelTimeLimitMinutes` |
 | `rewards` | `customerPointsPerEuro`, `riderPointsPerDelivery`, `referralPoints`, `newRiderWelcomeBonus`, `pointsExpiryDays`, `customerReferralMilestones[]` |
 | `payout` | `autoGenerate`, `payoutDays[]`, `minPayoutAmount`, `payoutWindowDays` |
+| `agreement` | `deligoSignatureUrl`, `deligoSignatoryName`, `deligoSignatoryRole` — the ONE global default DeliGo authorized signatory applied to every Vendor Agreement's DeliGo signature slot at finalization time; see [`vendor-agreement.md`](vendor-agreement.md). Deliberately independent of any specific Admin's identity — never derived from whichever Admin performs an approval/finalization action. |
 | `meta` | `updatedBy` → Admin |
 
 Endpoints (all `ADMIN`/`SUPER_ADMIN`): `POST /globalSettings/create` (blocks if a document already exists — "create once" pattern), `PATCH /globalSettings/update` (flattens the payload for targeted `$set`, validates payout-day/auto-generate consistency and commission-percent range), `GET /globalSettings/`. This is the single source of truth `Checkout` reads for delivery pricing — see [`../03-modules/cart-checkout-order.md`](../03-modules/cart-checkout-order.md).
@@ -41,10 +42,6 @@ Endpoints (all `ADMIN`/`SUPER_ADMIN`): `POST /globalSettings/create` (blocks if 
 - **Second implementation**: `AnalyticsSecondControllers`/`analyticsSecond.service.ts` — roughly 13 endpoints (admin/vendor/fleet dashboard-analytics, partner-performance-analytics, delivery-partner/fleet-manager/vendor earning-analytics, admin all-customers/vendor-performance analytics, offer-analytics, vendor tax-report-analytics, admin delivery-partner-analytics). No separate interface/utils file — reuses or inlines types from the first pair.
 
 Both mount under `/analytics` with no path collisions, but clearly **overlapping domains under different endpoint names** (e.g. `vendor-sales-analytics` vs. `vendor/dashboard-analytics`; `admin/sales-analytics` vs. `admin/dashboard-analytics`; `vendor/tax-report` vs. `vendor/tax-report-analytics`). This is two independently-built analytics surfaces that were never merged or deduplicated — the in-code section-header comments are the only documentation of why two implementations coexist. See [`../04-api-reference/endpoint-index.md`](../04-api-reference/endpoint-index.md) for the endpoint list and [`../08-known-gaps/technical-debt-and-todos.md`](../08-known-gaps/technical-debt-and-todos.md).
-
-## Agreement
-
-A vendor/establishment e-signature onboarding flow — an **admin-operated tool**, not self-service by vendors. `{establishmentName, email (unique), contactNumber, nif, isEmailVerified, draftPdfPath, agentSignaturePath, establishmentSignaturePath, signedPdfPath, status: PENDING_VERIFICATION → VERIFIED → DRAFT → SIGNED → EMAILED, createdBy → Admin}`. Flow: `POST /agreements/initiate` → OTP to email → `POST /verify-otp`/`resend-otp` → `POST /sign/:agreementId` (captures a signature image, generates a PDF via Puppeteer, uploads to RustFS) → `GET /:agreementId`/`GET /`. All endpoints gated `auth('ADMIN','SUPER_ADMIN',['CAN_MANAGE_AGREEMENTS'])`.
 
 ## Invoice
 
@@ -75,7 +72,7 @@ Admin-managed promotional banners: `{sponsorName, sponsorType: Ads|Offer|Other, 
 
 ## Database Impact
 
-See [`../05-data-model/collections-reference.md`](../05-data-model/collections-reference.md) for `Admin`, `GlobalSettings`, `Agreement`, `ActivityLog`, `ErrorLog`, `RequestLog`/`EmailLog`, `Sponsorship` field/index detail.
+See [`../05-data-model/collections-reference.md`](../05-data-model/collections-reference.md) for `Admin`, `GlobalSettings`, `ActivityLog`, `ErrorLog`, `RequestLog`/`EmailLog`, `Sponsorship` field/index detail — and `Agreement`, covered in its own document.
 
 ## Edge Cases
 
@@ -84,14 +81,13 @@ See [`../05-data-model/collections-reference.md`](../05-data-model/collections-r
 
 ## Related Modules
 
-[`../02-authentication/permissions-and-rbac.md`](../02-authentication/permissions-and-rbac.md), [`../03-modules/cart-checkout-order.md`](../03-modules/cart-checkout-order.md) for `GlobalSettings.delivery` consumption, [`../04-api-reference/error-codes.md`](../04-api-reference/error-codes.md) for `ErrorLog`, [`../08-known-gaps/technical-debt-and-todos.md`](../08-known-gaps/technical-debt-and-todos.md) for all the confirmed-incomplete items noted throughout this document.
+[`../02-authentication/permissions-and-rbac.md`](../02-authentication/permissions-and-rbac.md), [`../03-modules/cart-checkout-order.md`](../03-modules/cart-checkout-order.md) for `GlobalSettings.delivery` consumption, [`vendor-agreement.md`](vendor-agreement.md) for `GlobalSettings.agreement`, [`../04-api-reference/error-codes.md`](../04-api-reference/error-codes.md) for `ErrorLog`, [`../08-known-gaps/technical-debt-and-todos.md`](../08-known-gaps/technical-debt-and-todos.md) for all the confirmed-incomplete items noted throughout this document.
 
 ## Source References
 
 - `src/app/modules/Admin/admin.model.ts`, `.service.ts`
 - `src/app/modules/GlobalSetting/globalSetting.model.ts`, `.interface.ts`, `.service.ts`
 - `src/app/modules/Analytics/analytics.route.ts`, `analytics.service.ts`, `analyticsSecond.service.ts`
-- `src/app/modules/Agreement/agreement.model.ts`, `.service.ts`, `agreement.pdf.service.ts`
 - `src/app/modules/Invoice/orderPd.service.ts`, `invoice.service.ts`, `invoice.utils.ts`, `getPdAccessToken.ts`
 - `src/app/modules/ActivityLog/activityLog.model.ts`, `.utils.ts`
 - `src/app/modules/ErrorLog/errorLog.schema.ts`

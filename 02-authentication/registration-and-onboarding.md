@@ -15,9 +15,11 @@ flowchart TD
     SelfReg["POST /auth/register\n(VENDOR, DELIVERY_PARTNER, FLEET_MANAGER only)"] --> OTP1["OTP verification"]
     Onboard["POST /auth/register/onboard\n(role-gated, see matrix below)"] --> OTP1
     OTP1 --> Pending["status: PENDING"]
-    Pending --> Submit["PATCH /auth/:userId/submitForApproval\nstatus: SUBMITTED"]
+    Pending --> Agreement["VENDOR only: Agreement step\n(POST /agreements/vendor/:vendorId,\nPOST /agreements/sign/:agreementId)\nsee vendor-agreement.md"]
+    Agreement --> Submit["PATCH /auth/:userId/submitForApproval\nstatus: SUBMITTED"]
+    Pending -.non-VENDOR roles skip\nthe Agreement step.-> Submit
     Submit --> Decision["Admin/SUPER_ADMIN:\nPATCH /auth/:userId/approved-rejected-user"]
-    Decision -->|APPROVED| Active["Account active"]
+    Decision -->|APPROVED| Active["Account active\n(VENDOR: Agreement finalized\nin the background, see vendor-agreement.md)"]
     Decision -->|REJECTED| Editable["isUpdateLocked=false,\ncan edit and resubmit"]
 ```
 
@@ -59,6 +61,12 @@ For `VENDOR`/`DELIVERY_PARTNER` onboarding, `registeredBy.model` is set to `'Fle
 
 Same email-collision handling as self-registration, plus a defensive cleanup of any stale unverified profile document in the target collection. OTP: same Redis scheme, 300s TTL. Returns `status: PENDING`.
 
+## Agreement step (`VENDOR` only)
+
+Inserted into **both** the self-registration and onboarding flows, immediately before `submitForApproval` — the registration/onboarding flow itself is otherwise unchanged. The Vendor's legal contract (`INITIAL_REGISTRATION` Agreement) is created lazily here, referencing the Vendor by `_id`, not eagerly at `POST /auth/register`/`POST /auth/register/onboard` time — it never was and is not bundled into either creation call. Full detail, including the two-stage signing lifecycle and how the legal/company data is populated without the Vendor re-entering anything, in [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md).
+
+`SUB_VENDOR`, `DELIVERY_PARTNER`, `FLEET_MANAGER`, and `ADMIN` registration/onboarding skip this step entirely — it applies to `role: 'VENDOR'` only.
+
 ## OTP verification (`POST /auth/verify-otp`)
 
 Shared by both registration paths (and by OTP-first customer login — see [`login-flows.md`](login-flows.md)).
@@ -82,6 +90,8 @@ Authorization beyond self-submission:
 
 Sets `AuthUser.status='SUBMITTED'`, locks the profile document (`isUpdateLocked: true`), stamps `submittedForApprovalAt`. Sends a notification email to the user and a push notification to all `ADMIN`/`SUPER_ADMIN`.
 
+**`VENDOR`-only additional gate**: requires an `INITIAL_REGISTRATION` Agreement with `status: VENDOR_SIGNED` and a `posPaymentOption` selected — `400 INITIAL_AGREEMENT_NOT_SIGNED` otherwise. Not applied to any other role, including `SUB_VENDOR`. See [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md).
+
 ### `PATCH /auth/:userId/approved-rejected-user` (ADMIN/SUPER_ADMIN only)
 
 - Caller cannot act on themselves.
@@ -92,6 +102,7 @@ Sets `AuthUser.status='SUBMITTED'`, locks the profile document (`isUpdateLocked:
 - `BLOCKED` does not touch `isUpdateLocked`.
 - A commented-out (disabled) guard exists in the code that would have required a `DELIVERY_PARTNER` to already have a fleet assignment before approval — currently dead code, worth checking if reviving this area.
 - Fires a push notification plus a conditional email (skipped for `CUSTOMER` without an email, since customers may be phone-only) to the affected user.
+- **`VENDOR`-only side effect on `APPROVED`**: best-effort, non-blocking finalization of the Vendor's `INITIAL_REGISTRATION` Agreement — applies the default DeliGo signature, regenerates the final signed PDF, emails it to the Vendor. Failure here (e.g. the default signature isn't configured) is caught and logged; it never fails the approval itself. See [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md).
 
 ## Business Rules
 
@@ -110,10 +121,11 @@ See the onboarding matrix above and [`permissions-and-rbac.md`](permissions-and-
 
 ## Related Modules
 
-[`login-flows.md`](login-flows.md), [`session-and-token-management.md`](session-and-token-management.md), [`permissions-and-rbac.md`](permissions-and-rbac.md), [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md).
+[`login-flows.md`](login-flows.md), [`session-and-token-management.md`](session-and-token-management.md), [`permissions-and-rbac.md`](permissions-and-rbac.md), [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md), [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md) (the `VENDOR`-only Agreement step and submission gate).
 
 ## Source References
 
 - `src/app/modules/Auth/auth.route.ts`, `auth.service.ts`, `auth.constant.ts`
 - `src/app/modules/AuthUser/authUser.model.ts`
 - `src/app/constant/GlobalConstant/user.constant.ts` (`ROLE_DEVICE_LIMITS`, `USER_STATUS`)
+- `src/app/modules/Agreement/agreement.service.ts` (Agreement-related gate/finalization logic invoked from `Auth`)

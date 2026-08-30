@@ -10,20 +10,44 @@ Explain how products are structured and validated, how the category taxonomy is 
 
 ## Category hierarchy
 
-Three independent Mongoose collections defined in one file (`src/app/modules/Category/category.model.ts`), related only by ObjectId reference — not a nested tree:
+Three independent Mongoose collections, related only by ObjectId reference — not a nested tree. `BusinessCategory` and `Cuisine` live in `src/app/modules/Category/category.model.ts`; `ProductCategory` was split into its own module `src/app/modules/ProductCategory/` on 2026-08-29 (mounted at `/api/v1/product-categories`).
 
 ```mermaid
 flowchart TD
-    BusinessCategory["BusinessCategory\n(RESTAURANT | STORE — exactly 2 values in practice)"] --> ProductCategory
-    ProductCategory["ProductCategory\n(e.g. Pizza, Burger, Medicine)"] --> Product
+    BusinessCategory["BusinessCategory\n(RESTAURANT | STORE — exactly 2 values in practice)"] -.businessDetails.businessType.-> Vendor
+    Vendor --> ProductCategory
+    ProductCategory["ProductCategory\n(vendor-owned, e.g. Pizza, Burger)"] --> Product
     Cuisine["Cuisine\n(e.g. Italian, Portuguese —\nindependent, unrelated to the above)"] -.Vendor.restaurantCuisineType.-> Vendor
 ```
 
-- **BusinessCategory** — in practice exactly two seed values, `RESTAURANT`/`STORE`. Every `Vendor.businessDetails.businessType` points here.
-- **ProductCategory** — required `businessCategoryId` ref; this is what `Product.category` points to.
-- **Cuisine** — a flat, unrelated tag list used only for `Vendor.businessDetails.restaurantCuisineType`; not linked to BusinessCategory/ProductCategory at all.
+- **BusinessCategory** — admin-curated; in practice exactly two seed values, `RESTAURANT`/`STORE`. Every `Vendor.businessDetails.businessType` points here. Writes are `ADMIN`/`SUPER_ADMIN`-only.
+- **ProductCategory** — **vendor-owned since 2026-08-29** (`vendorId` → Vendor). Each vendor manages its own flat list; these are the vendor's customer-facing product groups. `Product.category` points here and must be owned by the same vendor. No `businessCategoryId`, no icon/image, no description — just a localized `name` + `slug` + `isActive`. Writes are `VENDOR`/`SUB_VENDOR` on their own records (plain JSON, no upload); `ADMIN`/`SUPER_ADMIN` are read-only. Per-vendor uniqueness on `name.en` and `slug`.
+- **Cuisine** — a flat, unrelated tag list used only for `Vendor.businessDetails.restaurantCuisineType`; not linked to BusinessCategory/ProductCategory at all. Admin-only writes.
 
-`GET /categories/*/open` endpoints are public for all three; writes are `ADMIN`/`SUPER_ADMIN`-only.
+`GET /categories/*/open` (BusinessCategory, Cuisine) and `GET /product-categories/open?vendorId=<id>` are public; the ProductCategory one requires `?vendorId=<id>`.
+
+### Single vendor-owned category (`Product.category`) — 2026-08-29
+
+`Product.category` is the **one and only** category field: a single required
+`ProductCategory` ref, used for SKU generation, discovery filtering, and BOGO
+matching. The `Product.additionalCategories[]` multi-tag field added 2026-08-24
+was **removed** in the same change that made `ProductCategory` vendor-owned.
+
+Validation (`CreateProductUtils.validateCategoryOwnership`, used by
+`product.service.createProduct` and by `updateProduct.utils.prepareUpdateData`
+whenever `category` changes):
+- The id must resolve to a live `ProductCategory` → else `404 NOT_FOUND_MESSAGE`.
+- Its `vendorId` must equal the product's own vendor → else `403 CATEGORY_NOT_OWNED_BY_VENDOR`.
+
+Discovery matches the single `category` field directly (`?category=<id>` is a
+plain exact-match filter on `GET /products` / `/products/open`; BOGO
+`buyCategoryId` resolution; the customer "browse vendors by category" filter;
+Meilisearch `categoryIds`, still an array but now length 1).
+
+`copy-to-branch`: a branch is a separate owner, so the copy resolves the
+branch's **own** category — it reuses a branch-owned category with the same
+`slug`, otherwise clones the source category (name/slug) under the branch's
+`vendorId` (same pattern as the addon-group cloning in that flow).
 
 ## Product validation rules
 
@@ -31,7 +55,7 @@ Executed in this order inside product creation (`createProduct.utils.ts`, `produ
 
 1. **Vendor approval** — caller's `status !== 'APPROVED'` → `403 VENDOR_NOT_APPROVED_TO_ADD_PRODUCTS`.
 2. **Price required without variations** — no `variations` and no `pricing.price` → `400 PRICE_REQUIRED_WHEN_NO_VARIATIONS`.
-3. **Category/business-type match** — the chosen `ProductCategory.businessCategoryId` must equal the vendor's own `businessType` → else `400 CATEGORY_NOT_UNDER_BUSINESS_TYPE`. The same guard is reused by `copy-to-branch` (see [`vendor-and-branches.md`](vendor-and-branches.md)).
+3. **Category ownership** — the chosen `ProductCategory` must exist, not be deleted, and have `vendorId` equal to the product's own vendor → else `403 CATEGORY_NOT_OWNED_BY_VENDOR` (`404` if the id doesn't resolve). Re-checked on update whenever `category` changes. `copy-to-branch` instead resolves/clones the category into the target branch (see [`vendor-and-branches.md`](vendor-and-branches.md)).
 4. **Restaurant/Store stock rule** (see below).
 5. **Addon ownership** — every `addonGroups[]` entry must exist, belong to the calling vendor, and not be deleted → `400 INVALID_ADDON_GROUPS`. Re-checked on update.
 6. **Tax application** — `pricing.taxRate` is always overwritten server-side from the referenced `Tax` document; a client-supplied `taxRate` is never trusted.
@@ -95,11 +119,13 @@ Zod schemas (`*.validation.ts`) validate request shape; the business rules above
 
 ## Authorization
 
-Product/AddonGroup writes: `VENDOR`/`SUB_VENDOR` (own resources only). Category/Tax/Ingredients/RestrictedItems writes: `ADMIN`/`SUPER_ADMIN`. See [`../04-api-reference/endpoint-index.md`](../04-api-reference/endpoint-index.md) for the full per-endpoint role table.
+Product / AddonGroup / **ProductCategory** writes: `VENDOR`/`SUB_VENDOR` (own resources only). BusinessCategory / Cuisine / Tax / Ingredients / RestrictedItems writes: `ADMIN`/`SUPER_ADMIN`. Admins have read-only access to every vendor's ProductCategories. See [`../04-api-reference/endpoint-index.md`](../04-api-reference/endpoint-index.md) for the full per-endpoint role table.
 
 ## Edge Cases
 
 - `copy-to-branch` re-derives the restaurant/store stock rule for the **target branch's** business type, not the source vendor's — relevant since a branch always inherits its parent's `businessType` at onboarding, so a mismatch shouldn't occur in practice, but the code does correctly handle it per-destination rather than assuming it matches the source.
+- `copy-to-branch` also can't reuse the parent's `category` id (categories are vendor-owned) — it looks up a branch-owned category with the same `slug` and, if absent, silently creates one for the branch. Re-running the copy reuses that clone.
+- Deleting a `ProductCategory` (soft or permanent) is **blocked** with `409 PRODUCT_CATEGORY_HAS_PRODUCTS` while any non-deleted `Product` still points its `category` at it (`assertNoProductsUnderCategory` in `productCategory.service.ts`). There is no cascade/cleanup — the vendor must reassign or delete those products first. Soft-deleted products don't count toward the guard.
 - A `RESTAURANT` vendor's product `stock` field is always `undefined`, not zero — code checking for "out of stock" on a restaurant product must not assume a numeric `stock.quantity` exists.
 
 ## Related Modules
@@ -109,7 +135,8 @@ Product/AddonGroup writes: `VENDOR`/`SUB_VENDOR` (own resources only). Category/
 ## Source References
 
 - `src/app/modules/Product/product.model.ts`, `product.service.ts`, `createProduct.utils.ts`, `updateProduct.utils.ts`, `product.route.ts`
-- `src/app/modules/Category/category.model.ts`, `businessCategory.*`, `productCategory.*`, `cuisineCategory.*`
+- `src/app/modules/Category/category.model.ts`, `businessCategory.*`, `cuisineCategory.*`
+- `src/app/modules/ProductCategory/productCategory.*` (standalone module, mounted at `/api/v1/product-categories`)
 - `src/app/modules/Add-Ons/addOns.model.ts`, `addOns.service.ts`
 - `src/app/modules/Tax/tax.model.ts`
 - `src/app/modules/RestrictedItems/restrictedItems.model.ts`

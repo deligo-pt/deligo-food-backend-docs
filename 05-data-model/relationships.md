@@ -32,7 +32,7 @@ flowchart TD
     DeliveryPartner -->|deliveryPartnerId, nullable| Order
 
     Product -->|category| ProductCategory
-    ProductCategory -->|businessCategoryId| BusinessCategory
+    ProductCategory -->|vendorId| Vendor
     Product -->|vendorId| Vendor
     Product -->|addonGroups, many-to-many| AddonGroup
     Product -->|pricing.taxId| Tax
@@ -114,11 +114,11 @@ flowchart TD
 
 **Catalog**
 - `Product.vendorId` → `Vendor`
-- `Product.category` → `ProductCategory`
+- `Product.category` → `ProductCategory` (required, single; must be owned by the same vendor)
 - `Product.addonGroups[]` → `AddonGroup` (many-to-many)
 - `Product.pricing.taxId` → `Tax`
 - `Product.approvedBy` → `Admin`
-- `ProductCategory.businessCategoryId` → `BusinessCategory`
+- `ProductCategory.vendorId` → `Vendor` (owner; vendor-owned since 2026-08-29)
 - `AddonGroup.vendorId` → `Vendor`
 - `AddonGroup.options[].tax` → `Tax`
 - `Ingredient.tax` → `Tax`
@@ -168,7 +168,8 @@ flowchart TD
 
 **Admin / Ops**
 - `GlobalSettings.meta.updatedBy` → `Admin`
-- `Agreement.createdBy` → `Admin`
+- `Agreement.vendorId` → `Vendor` (required, 1:N — every Vendor has exactly one `INITIAL_REGISTRATION` agreement plus any number of later ones)
+- `Agreement.createdBy` → `Admin | Vendor` [poly] (`createdByModel` refPath — a self-service Vendor can create/own their own Agreement, not just an Admin/Commercial; see [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md))
 
 **Infra / logging** — no `ref:` fields; `ErrorLog.userId`, `Notification.receiverId`, `EmailLog.to` are all loose strings.
 

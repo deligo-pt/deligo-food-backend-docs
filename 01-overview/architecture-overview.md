@@ -76,7 +76,7 @@ Modules grouped by function (see [`role-model.md`](role-model.md) and `03-module
 - **Payments/Finance**: `Payment`, `Payment-Token`, `Transaction`, `Wallet`, `DeliGo_Balance`, `Payout`, `Points`, `Referral`
 - **Logistics**: `Zone`, `Sos`
 - **Engagement**: `Rating`, `Notification`, `Support`, `Sponsorships`, `ContactUs`
-- **Admin/Ops**: `GlobalSetting`, `Analytics`, `Invoice`, `Agreement`, `Meilisearch`, `Ai-Content-Generator`
+- **Admin/Ops**: `GlobalSetting`, `Analytics`, `Invoice`, `Agreement` (now integrated into `VENDOR` self-service registration too, not admin-only — see [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md)), `Meilisearch`, `Ai-Content-Generator`
 - **Infra/logging**: `log` (RequestLog/EmailLog), `ErrorLog`, `Upload`, `Test`
 
 ## Request Lifecycle

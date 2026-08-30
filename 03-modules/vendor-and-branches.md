@@ -99,7 +99,7 @@ Branches build their own menus manually by default — no shared/live-linked cat
 
 Server-side (`copyProductToBranch`, `product.service.ts`):
 1. **Ownership checks** — source product belongs to caller; target `vendorId` is a `SUB_VENDOR` registered under the caller. Failures: `404 PRODUCT_NOT_FOUND` / `403 TARGET_VENDOR_NOT_YOUR_BRANCH`.
-2. **Category check** — the branch's `businessType` must match the product's category (`403/400 CATEGORY_NOT_UNDER_BUSINESS_TYPE`).
+2. **Category resolution** — `ProductCategory` is vendor-owned (since 2026-08-29), so the branch can't reuse the parent's `category` id. The copy looks up a branch-owned category with the same `slug`; if none exists it clones the source category (name/slug) under the branch's `vendorId`, then points the copied product at it. (If the source product's own category can't be loaded at all, the copy fails with `404 NOT_FOUND_MESSAGE`.) The removed `additionalCategories[]` is no longer copied.
 3. **Addon groups are cloned, never shared** — `AddonGroup.vendorId` is a hard ownership field, so a branch's product can never reference the parent's addon group. For each addon group on the source product: reused if the branch already has one with a matching bilingual `title`; otherwise a fresh `AddonGroup` is created under the branch, with newly generated option SKUs.
 4. **A brand-new, fully independent `Product` is created** — new `productId`/`sku`/`slug`, `vendorId` set to the branch (not the caller), fresh variation SKUs, pricing/stock/images copied from the source, tax rate re-applied from current config.
 
@@ -119,7 +119,20 @@ All three funnel through `recomputeParentBranchCount` (`auth.service.ts`): `Vend
 
 ### Vendor approval & opening hours
 
-Vendor approval is centralized in `Auth` (`submitForApproval`/`approvedOrRejectedUser`, `src/app/modules/Auth/auth.service.ts`), not a Vendor-module concern — see [`../02-authentication/registration-and-onboarding.md`](../02-authentication/registration-and-onboarding.md).
+Vendor approval is centralized in `Auth` (`submitForApproval`/`approvedOrRejectedUser`, `src/app/modules/Auth/auth.service.ts`), not a Vendor-module concern — see [`../02-authentication/registration-and-onboarding.md`](../02-authentication/registration-and-onboarding.md). A `role: VENDOR` submission additionally requires a signed Agreement (a `SUB_VENDOR` submission does not) — see below and [`vendor-agreement.md`](vendor-agreement.md).
+
+### Agreement coverage (`coveredByAgreement`)
+
+A `SUB_VENDOR` never has its own Agreement and is never gated on one for submission/approval. It's covered by its **parent** Vendor's `INITIAL_REGISTRATION` agreement instead — surfaced as a computed (not stored) `coveredByAgreement` field on `GET /vendors/:vendorId` and `GET /vendors/:vendorId/branches` for a branch:
+```ts
+coveredByAgreement: {
+  vendorId: ObjectId,      // the PARENT vendor's id
+  agreementId: ObjectId,
+  status: "UNSIGNED" | "VENDOR_SIGNED" | "SIGNED",
+  signedAt?: Date,
+} | null
+```
+`null` if the parent has no `INITIAL_REGISTRATION` agreement (yet). Computed once per `getVendorBranches` call (all branches share the same parent) rather than per-branch. Full Agreement lifecycle detail in [`vendor-agreement.md`](vendor-agreement.md).
 
 Opening hours use a dual mechanism: a manual toggle (`isManualControl`) plus a per-minute cron (`src/app/cron/vendorStore.crone.ts`) that computes open/closed from `openingHours`/`closingHours`/`closingDays`, with overnight-wraparound handling in `Europe/Lisbon` time, resetting manual overrides nightly at 00:00–00:05. See [`../07-operations/cron-and-background-jobs.md`](../07-operations/cron-and-background-jobs.md).
 
@@ -143,7 +156,7 @@ Summarized in the tables above. Onboarding permission matrix (who may create whi
 
 ## Related Modules
 
-Product/Catalog ([`product-and-catalog.md`](product-and-catalog.md)), Auth ([`../02-authentication/registration-and-onboarding.md`](../02-authentication/registration-and-onboarding.md)), Order/Checkout ([`cart-checkout-order.md`](cart-checkout-order.md)), Meilisearch ([`../06-integrations/external-services.md`](../06-integrations/external-services.md)).
+Product/Catalog ([`product-and-catalog.md`](product-and-catalog.md)), Auth ([`../02-authentication/registration-and-onboarding.md`](../02-authentication/registration-and-onboarding.md)), Order/Checkout ([`cart-checkout-order.md`](cart-checkout-order.md)), Meilisearch ([`../06-integrations/external-services.md`](../06-integrations/external-services.md)), Vendor Agreement ([`vendor-agreement.md`](vendor-agreement.md)) for `coveredByAgreement`.
 
 ## Known Limitations (as documented in `docs/vendor-branch-flow-guide.md`)
 

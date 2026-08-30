@@ -68,7 +68,9 @@ Requires `VENDOR`/`SUB_VENDOR` with `status: APPROVED` (or `ADMIN`/`SUPER_ADMIN`
 
 `vendorId`/`isGlobal`/`adminId` are never client-supplied — the server derives them (vendor calls always get `vendorId: <caller>`, `isGlobal: false`). A `SUB_VENDOR` acts under its parent vendor for ownership checks.
 
-**BOGO configuration** (`bogo` block): `buyQty`, `getQty`, and a trigger of either `buyProductId` or `buyCategoryId` (not both). `getProductId`/`getVariationSku` default to the buy-side values if omitted. Ownership of `buyProductId`/`buyCategoryId`'s products/`getProductId` is enforced (`403 BOGO_BUY_PRODUCT_NOT_OWNED` / `BOGO_GET_PRODUCT_NOT_OWNED`).
+**BOGO configuration** (`bogo` block): `buyQty`, `getQty`, and a trigger of either `buyProductId` or `buyCategoryId` (not both). `getProductId`/`getVariationSku` default to the buy-side values if omitted. Ownership of `buyProductId`/`buyCategoryId`'s products/`getProductId` is enforced (`403 BOGO_BUY_PRODUCT_NOT_OWNED` / `BOGO_GET_PRODUCT_NOT_OWNED`). `buyCategoryId` matches a product whose single `category` equals the trigger id (`offer.utils.ts`). `buyCategoryId` should be one of the vendor's own `ProductCategory` ids (categories are vendor-owned as of 2026-08-29). See [`product-and-catalog.md`](product-and-catalog.md).
+
+  > The `Product.additionalCategories[]` multi-tag field (added 2026-08-24) was removed on 2026-08-29 along with the move to vendor-owned categories — a BOGO `buyCategoryId` now matches on the product's single `category` only.
 
 - **Product-level (default)** — leave variation SKUs unset: every variation of the product counts toward the trigger together, and the free unit comes from the cheapest matching variation in the cart.
 - **Variation-level (strict)** — set `buyVariationSku` to pin the trigger to one exact variation; other variations don't count.
@@ -141,7 +143,7 @@ Success response fields worth noting: `offer.offerApplied.bogoSnapshot` (only pr
 | `READY_FOR_PICKUP` | both | Food ready — rider pickup point (delivery) or counter pickup (pickup) |
 | `PICKED_UP` | delivery | Rider picked up from vendor |
 | `ON_THE_WAY` | delivery | Rider en route |
-| `DELIVERED` | delivery | Rider delivered, proof image attached (terminal) |
+| `DELIVERED` | delivery | Rider delivered, customer handoff OTP verified (terminal) |
 | `PICKED_UP_BY_CUSTOMER` | pickup | Customer verified at counter (terminal) |
 | `NO_SHOW` | pickup | Customer never collected within the pickup window (terminal, refund owed) |
 | `CANCELED` | both | Canceled by customer/vendor/admin |
@@ -164,9 +166,9 @@ flowchart LR
 | 4b | Rider | Decline | `PATCH /:orderId/accept-dispatch-order {action:"REJECT"}` | Removed from `dispatchPartnerPool`; last rider declining → falls back to `AWAITING_PARTNER` |
 | 5 | Vendor | Start preparing | `PATCH /:orderId/status {type:"PREPARING"}` | Requires `ASSIGNED` first |
 | 6 | Vendor | Mark ready | `PATCH /:orderId/status {type:"READY_FOR_PICKUP"}` | Requires `PREPARING` first; rider notified |
-| 7 | Rider | Picked up | `PATCH /:orderId/update-order-status {orderStatus:"PICKED_UP"}` | Requires `READY_FOR_PICKUP` |
+| 7 | Rider | Picked up | `PATCH /:orderId/update-order-status {orderStatus:"PICKED_UP"}` | Requires `READY_FOR_PICKUP`; server generates a 6-digit `deliveryOtp.code` and pushes it to the customer (`DELIVERY_OTP_TO_CUSTOMER`) |
 | 8 | Rider | En route | `PATCH /:orderId/update-order-status {orderStatus:"ON_THE_WAY"}` | Requires `PICKED_UP` |
-| 9 | Rider | Delivered | `PATCH /:orderId/update-order-status {orderStatus:"DELIVERED", deliveryProofImage}` | Requires `ON_THE_WAY`; proof image mandatory; terminal |
+| 9 | Rider | Delivered | `PATCH /:orderId/update-order-status {orderStatus:"DELIVERED", otp}` | Requires `ON_THE_WAY`; `otp` must match `deliveryOtp.code` (customer reads it from the push or `GET /:orderId`); mismatch → `401 INVALID_DELIVERY_OTP` and increments a lockout counter; 5th wrong attempt → `403 DELIVERY_OTP_MAX_ATTEMPTS_EXCEEDED`; no OTP ever generated (e.g. `PICKED_UP` step skipped) → `400 DELIVERY_OTP_NOT_GENERATED`; terminal |
 | — | Rider | Can't complete | `{orderStatus:"REASSIGNMENT_NEEDED", reason}` | Frees rider; → `ASSIGNED`, needs a fresh broadcast |
 
 **Cancellation:** Customer — `PATCH /:orderId/cancel {reason}`, any time before `DELIVERED`/`CANCELED`/`REJECTED`, refunded only if still `PENDING`. Vendor — `PATCH /:orderId/status {type:"CANCELED", reason}`, blocked once `ASSIGNED` or later.
@@ -233,6 +235,14 @@ pickup?: {
   verifiedBy?: ObjectId | null;
 };
 
+deliveryOtp?: {                // DELIVERY orders only — handoff code the rider collects from the customer
+  code: string;                // 6-digit, select:false by default; generated on the PICKED_UP transition
+  generatedAt: Date;
+  attempts: number;            // wrong DELIVERED attempts; locked out at 5 (DELIVERY_OTP_MAX_ATTEMPTS)
+  verifiedAt?: Date | null;
+  verifiedBy?: ObjectId | null;
+};
+
 deliveryAddress?: TAddress;   // required only when fulfillmentType === 'DELIVERY'
 pickupAddress?: TAddress;     // vendor's storefront, set on ACCEPTED for both flows
 ```
@@ -255,6 +265,7 @@ Product creation (relevant to what can appear in a cart) forbids stock tracking 
 - **Stock reservation timing**: delivery orders reserve stock only on `ACCEPTED`, not at order creation — a `PENDING` order does not yet hold inventory.
 - **Refund behavior**: customer cancellation refunds only if still `PENDING`; `NO_SHOW` sets `refundStatus: PENDING`; `REJECTED` implies a refund is owed. Actual refund execution is a Payment-module concern — see [`payments-and-payouts.md`](payments-and-payouts.md).
 - Every status transition is logged to `statusHistory` on the order.
+- **Delivery OTP lockout**: unlike the self-pickup `verify-pickup` code (no lockout), `deliveryOtp.attempts` increments on every wrong `otp` submitted at `DELIVERED` and locks the rider out (`403 DELIVERY_OTP_MAX_ATTEMPTS_EXCEEDED`) after 5 wrong tries — the rider needs support/admin intervention to complete the order past that point (no reset endpoint currently exists). A fresh `deliveryOtp` (with `attempts` reset to 0) is only ever generated on a `PICKED_UP` transition.
 - `GET /:orderId` for a customer fetching another customer's order returns `404`, not `403` — deliberate, to avoid leaking order existence.
 
 ## Validation

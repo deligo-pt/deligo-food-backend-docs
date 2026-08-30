@@ -38,7 +38,8 @@ Let a developer find, for any feature, which endpoint to call, which roles/permi
 | `/wallets` | `Wallet/wallet.route.ts` |
 | `/profile` | `Profile/profile.route.ts` |
 | `/notifications` | `Notification/notification.route.ts` |
-| `/categories` | `Category/category.route.ts` (BusinessCategory + ProductCategory + Cuisine) |
+| `/categories` | `Category/category.route.ts` (BusinessCategory + Cuisine) |
+| `/product-categories` | `ProductCategory/productCategory.route.ts` (vendor-owned Product Category) |
 | `/offers` | `Offer/offer.route.ts` |
 | `/ratings` | `Rating/rating.route.ts` |
 | `/analytics` | `Analytics/analytics.route.ts` (two controller pairs, see below) |
@@ -175,8 +176,13 @@ Auth is covered in full in [`../02-authentication/`](../02-authentication/). Car
 ### Notification (`/notifications`)
 All endpoints share role set `CUSTOMER, VENDOR, SUB_VENDOR, DELIVERY_PARTNER, FLEET_MANAGER, ADMIN, SUPER_ADMIN` except `POST /broadcast` (`ADMIN, SUPER_ADMIN` only): `GET /my-notifications`, `PATCH /:id/read`, `PATCH /mark-all-as-read`, `GET /all`, `DELETE /:id/soft-delete`, `DELETE /soft-delete`, `DELETE /soft-delete-all`, `DELETE /:id/permanent-delete`, `DELETE /permanent-delete`, `DELETE /permanent-delete-all`, `POST /broadcast`.
 
-### Category (`/categories`) — Business Category, Product Category, Cuisine
-Three parallel sub-resource trees (`/businessCategory`, `/productCategory`, `/cuisine`), each following the same pattern: `POST`/`PATCH` write (ADMIN, SUPER_ADMIN, multipart image upload), `GET` list/single (role-restricted) + `GET .../open` and `.../open/:id` (public), `DELETE soft-delete/:id` and `DELETE permanent-delete/:id` (ADMIN, SUPER_ADMIN). Read access for the authenticated variants is `ADMIN, SUPER_ADMIN, FLEET_MANAGER, VENDOR, SUB_VENDOR, CUSTOMER` (businessCategory) or `ADMIN, SUPER_ADMIN, VENDOR, SUB_VENDOR, CUSTOMER` (productCategory, cuisine).
+### Category (`/categories`) — Business Category, Cuisine
+Two sub-resource trees under `/categories`:
+
+- **`/businessCategory`** and **`/cuisine`** — admin-managed. `POST`/`PATCH`/`DELETE soft-delete/:id`/`DELETE permanent-delete/:id` are `ADMIN, SUPER_ADMIN` (multipart image upload). `GET` list/single + `GET .../open`, `.../open/:id` (public). Authenticated read: `ADMIN, SUPER_ADMIN, FLEET_MANAGER, VENDOR, SUB_VENDOR, CUSTOMER` (businessCategory) / `ADMIN, SUPER_ADMIN, VENDOR, SUB_VENDOR, CUSTOMER` (cuisine).
+
+### Product Category (`/product-categories`)
+Vendor-owned (standalone module since 2026-08-29; moved out of `/categories`), owner field `vendorId` (→ Vendor). `POST /`, `PATCH /:id`, `DELETE /soft-delete/:id`, `DELETE /permanent-delete/:id` are `VENDOR, SUB_VENDOR` and act on the caller's own categories only (plain JSON body — no icon/image upload). `GET /` list + `GET /:id` single: `ADMIN, SUPER_ADMIN, VENDOR, SUB_VENDOR, CUSTOMER` — admins see every vendor's (read-only, optional `?vendorId=`), vendors see their own, **customers must pass `?vendorId=<id>`** (`400 VENDOR_ID_REQUIRED`). `GET /open?vendorId=<id>` (public, `vendorId` required) and `GET /open/:id` (public).
 
 ### Rating (`/ratings`)
 | Method | Path | Roles |
@@ -325,7 +331,16 @@ All `GET`, query-param driven, no `validateRequest`. Two controller implementati
 | POST | `/generate-product-description` | VENDOR, SUB_VENDOR, ADMIN, SUPER_ADMIN |
 
 ### Agreement (`/agreements`)
-All routes: `ADMIN, SUPER_ADMIN` + `CAN_MANAGE_AGREEMENTS` permission: `POST /initiate`, `POST /verify-otp`, `POST /resend-otp`, `POST /sign/:agreementId`, `GET /:agreementId`, `GET /`.
+See [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md) for the full flow — this table supersedes any other document describing an `/initiate`/`/verify-otp`/`/resend-otp` Agreement flow, which no longer exists.
+
+| Method | Path | Roles |
+|---|---|---|
+| POST | `/vendor/:vendorId` | VENDOR (self, ownership-checked), ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
+| GET | `/vendor/:vendorId` | VENDOR (self), ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
+| POST | `/sign/:agreementId` | VENDOR (self), ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
+| GET | `/:agreementId` | VENDOR (self), ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
+| PATCH | `/:agreementId` | ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
+| GET | `/` | ADMIN, SUPER_ADMIN + `CAN_MANAGE_AGREEMENTS` |
 
 ### Permission (`/permissions`)
 All routes: `SUPER_ADMIN, ADMIN` + `CAN_MANAGE_PERMISSIONS` permission: `POST /create`, `PATCH /:permissionId`, `GET /`, `GET /:permissionId`, `DELETE /:permissionId`, `PATCH /assign-permissions/:adminId`, `PATCH /revoke-permissions/:adminId`.

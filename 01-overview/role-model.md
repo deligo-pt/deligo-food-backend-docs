@@ -78,7 +78,7 @@ Onboarded only by `SUPER_ADMIN`. Starts with `permissions: []` and must be expli
 The only role with no approval workflow. Logs in via OTP (email or contact number) or social login (Google/Facebook) — never a password. Can hold multiple linked social accounts alongside OTP login simultaneously. See [`../02-authentication/login-flows.md`](../02-authentication/login-flows.md).
 
 ### VENDOR
-Self-registers via `POST /auth/register`, then goes through the standard approval workflow. Once approved, sets brand-identity fields (`businessName`, `businessType`, `restaurantCuisineType`, `isHalal`, `NIF`) that cascade to any `SUB_VENDOR` branches it later onboards. Full detail in [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md).
+Self-registers via `POST /auth/register`, then goes through the standard approval workflow — with one additional gate: before submission, a `VENDOR` (uniquely among all roles) must open and sign an `INITIAL_REGISTRATION` Agreement (`status: VENDOR_SIGNED`, POS payment option selected), or `submitForApproval` rejects with `INITIAL_AGREEMENT_NOT_SIGNED`. See [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md). Once approved, sets brand-identity fields (`businessName`, `businessType`, `restaurantCuisineType`, `isHalal`, `NIF`) that cascade to any `SUB_VENDOR` branches it later onboards. Full detail in [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md).
 
 ### SUB_VENDOR (branch architecture)
 **Not a separate model** — a `SUB_VENDOR` is a `Vendor` document with `role: 'SUB_VENDOR'`, linked to its parent via `registeredBy: {id: <parent Vendor._id>, model: 'Vendor'}`. There is no dedicated `parentVendorId` schema field; `registeredBy` **is** the entire parent↔branch link. Brand-wide fields (`businessName`/`businessType`) are copied from the parent once at onboarding and thereafter can only be changed on the parent (cascading automatically to every branch) — never directly on a branch, not even by an admin. Everything else (location, hours, menu, inventory) is independent per branch. Full detail, including the onboarding flow and the `copy-to-branch` product-push mechanism, in [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md).
@@ -96,7 +96,7 @@ Always admin-onboarded (never self-registers with a branch structure the way ven
 
 ## Related Modules
 
-[`glossary.md`](glossary.md), [`../02-authentication/`](../02-authentication/registration-and-onboarding.md) (all four documents), [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md), [`../03-modules/delivery-and-dispatch.md`](../03-modules/delivery-and-dispatch.md).
+[`glossary.md`](glossary.md), [`../02-authentication/`](../02-authentication/registration-and-onboarding.md) (all four documents), [`../03-modules/vendor-and-branches.md`](../03-modules/vendor-and-branches.md), [`../03-modules/vendor-agreement.md`](../03-modules/vendor-agreement.md), [`../03-modules/delivery-and-dispatch.md`](../03-modules/delivery-and-dispatch.md).
 
 ## Source References
 
