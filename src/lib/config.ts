@@ -49,4 +49,12 @@ export const SITE = {
 export const SPECIAL_ROUTES = {
   changelog: "/changelog",
   decisions: "/decisions",
+  /** Base path for a document's "View changes" (latest Git diff) view; the
+   *  doc slug is appended, e.g. `/changes/03-modules/cart-checkout-order`. */
+  changes: "/changes",
 } as const;
+
+/** Route for a document's "View changes" view, given its slug segments. */
+export function docChangesHref(slug: string[]): string {
+  return `${SPECIAL_ROUTES.changes}/${slug.join("/")}`;
+}

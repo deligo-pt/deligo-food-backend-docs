@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { DocMeta } from "@/types";
 import { formatDate } from "@/lib/format";
 import { Breadcrumbs, type Crumb } from "./Breadcrumbs";
@@ -7,6 +8,7 @@ export function DocHeading({
   title,
   description,
   meta,
+  changesHref,
 }: {
   crumbs: Crumb[];
   title: string;
@@ -15,6 +17,8 @@ export function DocHeading({
     DocMeta,
     "lastModified" | "lastModifiedSource" | "category" | "relPath"
   >;
+  /** When set, a "View changes" link to the document's latest-diff view. */
+  changesHref?: string | null;
 }) {
   const date = formatDate(meta?.lastModified);
 
@@ -30,7 +34,7 @@ export function DocHeading({
         </p>
       )}
 
-      {(date || meta?.relPath) && (
+      {(date || meta?.relPath || changesHref) && (
         <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-fg-subtle">
           {date && (
             <span className="inline-flex items-center gap-1.5">
@@ -53,6 +57,15 @@ export function DocHeading({
               </code>
             </span>
           )}
+          {changesHref && (
+            <Link
+              href={changesHref}
+              className="inline-flex items-center gap-1.5 rounded transition-colors hover:text-fg"
+            >
+              <DiffIcon />
+              <span>View changes</span>
+            </Link>
+          )}
         </div>
       )}
     </header>
@@ -73,6 +86,16 @@ function FileIcon() {
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M14 3v4a1 1 0 0 0 1 1h4" />
       <path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2Z" />
+    </svg>
+  );
+}
+
+function DiffIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3v6M9 6h6" />
+      <path d="M12 15v6M9 18h6" />
+      <path d="M5 9 3 12l2 3M19 9l2 3-2 3" />
     </svg>
   );
 }

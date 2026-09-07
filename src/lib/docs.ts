@@ -3,9 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { cache } from "react";
 import matter from "gray-matter";
-import type { DocCommit, DocContent, DocMeta } from "@/types";
+import type { DocCommit, DocContent, DocDiff, DocMeta } from "@/types";
 import { getDocsContentDir } from "./config";
-import { getFileHistory, getLastCommit, getLastModified } from "./git";
+import {
+  getFileHistory,
+  getLastCommit,
+  getLastModified,
+  getLatestFileDiff,
+} from "./git";
 import { extractToc, firstParagraph, getTitle, stripTitle } from "./markdown";
 import { humanizeSlug, numericPrefix } from "./format";
 
@@ -250,6 +255,17 @@ export function getRecentlyUpdatedDocs(limit = 6): DocMeta[] {
 export function getDocHistory(slug: string[], limit = 20): DocCommit[] {
   const doc = getDoc(slug);
   return doc ? getFileHistory(doc.filePath, limit) : [];
+}
+
+/**
+ * The latest committed change to one document — its most recent commit diffed
+ * against that commit's parent — for the "View changes" view. `null` when the
+ * slug is unknown/draft (via `getDoc`) or the file has no usable git history,
+ * so the caller can hide the action entirely.
+ */
+export function getDocLatestDiff(slug: string[]): DocDiff | null {
+  const doc = getDoc(slug);
+  return doc ? getLatestFileDiff(doc.filePath) : null;
 }
 
 export { getChangedDocPaths } from "./git";

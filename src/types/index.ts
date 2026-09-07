@@ -65,6 +65,50 @@ export interface TocItem {
   id: string;
 }
 
+/** Kind of a single line inside a unified-diff hunk. */
+export type DiffLineKind = "context" | "add" | "del";
+
+/** One line of a rendered diff, carrying both file line numbers. */
+export interface DiffLine {
+  kind: DiffLineKind;
+  /** 1-based line number in the pre-change file, or null for added lines. */
+  oldLine: number | null;
+  /** 1-based line number in the post-change file, or null for removed lines. */
+  newLine: number | null;
+  /** Line content with the leading +/-/space marker removed. */
+  text: string;
+}
+
+/** One `@@ … @@` hunk of a file diff. */
+export interface DiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** Text after the closing `@@` (often the enclosing section), trimmed. */
+  section: string;
+  lines: DiffLine[];
+}
+
+/**
+ * The latest committed change to a single documentation file: the diff between
+ * the most recent commit that touched it and that commit's parent.
+ */
+export interface DocDiff {
+  /** The commit this diff shows. */
+  commit: DocCommit;
+  /** Parent commit short hash, or null when `commit` is a root commit. */
+  parentShortHash: string | null;
+  /** True when the file was introduced by `commit`. */
+  added: boolean;
+  /** True when the raw diff exceeded the output limit and was clipped. */
+  truncated: boolean;
+  /** Parsed hunks. Empty when there is nothing textual to render. */
+  hunks: DiffHunk[];
+  /** Human note when there are no hunks (binary file, metadata-only change). */
+  note: string | null;
+}
+
 /** A documentation page plus its rendered-ready content. */
 export interface DocContent extends DocMeta {
   /** Raw markdown with the leading H1 removed (title is rendered separately). */

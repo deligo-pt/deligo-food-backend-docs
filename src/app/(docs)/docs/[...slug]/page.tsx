@@ -11,6 +11,7 @@ import {
   getDoc,
   getDocCategories,
 } from "@/lib/docs";
+import { docChangesHref } from "@/lib/config";
 import { sectionLabel } from "@/lib/format";
 
 export const dynamicParams = false;
@@ -75,6 +76,7 @@ export default async function DocPage({
         ]}
         title={doc.title}
         meta={doc}
+        changesHref={doc.lastCommit ? docChangesHref(doc.slug) : null}
       />
       <Markdown content={doc.content} currentSlug={doc.slug} />
       <PrevNext prev={prev} next={next} />
