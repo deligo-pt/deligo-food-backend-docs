@@ -68,6 +68,11 @@ No other DNS entries are required. Do not change DNS until the server is up.
 TLS is terminated at the proxy; forward the real host and scheme so that
 absolute redirects from `proxy.ts` stay on `https://docs.deligo.pt`.
 
+**HSTS is set here, not in the app.** `Strict-Transport-Security` must only ever
+be sent over HTTPS, and the app sits behind a plaintext loopback hop, so it
+cannot know the external scheme with certainty. The TLS terminator is the right
+place. `app/next.config.ts` deliberately omits it.
+
 ### nginx
 
 ```nginx
@@ -77,6 +82,11 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/docs.deligo.pt/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/docs.deligo.pt/privkey.pem;
+
+    # HSTS — 2 years, include subdomains. Add `; preload` only once you are
+    # certain every deligo.pt subdomain is HTTPS-only and you have submitted
+    # the domain to hstspreload.org.
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
 
     location / {
         proxy_pass         http://127.0.0.1:3000;
@@ -97,11 +107,16 @@ server {
 }
 ```
 
+> The application already emits `Content-Security-Policy`, `X-Frame-Options`,
+> `X-Content-Type-Options` and `Referrer-Policy`; the proxy only needs to add
+> HSTS. Do not let the proxy strip or override the app's headers.
+
 ### Caddy (equivalent)
 
 ```
 docs.deligo.pt {
     reverse_proxy 127.0.0.1:3000
+    header Strict-Transport-Security "max-age=63072000; includeSubDomains"
 }
 ```
 
@@ -189,7 +204,7 @@ Automate by running the above from CI on every push to the default branch.
   Decision Log; both are optional and their pages show an empty state when the
   file is absent.
 
-## Security / cache behaviour (unchanged from Phase 3)
+## Security / cache behaviour
 
 * Every request passes through `src/proxy.ts`; anonymous → `/login` (or `401`
   for `/api/*`). `/login` is the only public route.
@@ -198,9 +213,21 @@ Automate by running the above from CI on every push to the default branch.
 * `next.config.ts` sends `Cache-Control: private, no-store` + `X-Robots-Tag:
   noindex` on every rendered response; only immutable `/_next/` assets stay
   publicly cacheable. `robots.txt` disallows all.
+* `next.config.ts` also sends a strict `Content-Security-Policy` (no
+  `unsafe-eval`; `script-src`/`style-src` keep `'unsafe-inline'` — see the note
+  in that file), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
+  `X-Content-Type-Options: nosniff`. `/docs-assets/*` keeps its own tighter
+  per-response CSP. HSTS is added by the reverse proxy (see above).
+* Rendered Markdown is sanitised with `rehype-sanitize` (GitHub's default
+  schema): embedded raw HTML is limited to a safe tag/attribute set, and
+  `javascript:` / `data:` URLs in links and images are stripped.
 * Because the whole site is private, the reverse proxy must **not** add its own
   shared/`public` caching for `/` — leave caching to the app.
-* Sessions are stateless (no server store). To force everyone to sign in again
-  before the 7-day expiry — e.g. the shared password leaked — increment
-  `DOCS_AUTH_VERSION` and restart. Every token minted under the old value is
-  rejected on its next request.
+* Sessions are stateless (no server store). A session cookie / token lasts
+  **24 hours** (`SESSION_MAX_AGE_SECONDS`); after that the token's signed `exp`
+  fails and the user signs in again.
+* Signing out clears the browser's cookie only. It cannot invalidate a token
+  that was already copied off the device — that copy stays valid until its 24h
+  `exp`. To revoke *everything* immediately (e.g. the shared password leaked, or
+  a token was exfiltrated), increment `DOCS_AUTH_VERSION` and restart: every
+  token minted under the old value is rejected on its next request.

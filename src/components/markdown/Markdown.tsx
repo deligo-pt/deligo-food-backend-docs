@@ -4,6 +4,7 @@ import Link from "next/link";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeSlug from "rehype-slug";
 import rehypeAutolinkHeadings from "rehype-autolink-headings";
 import rehypeHighlight from "rehype-highlight";
@@ -14,7 +15,15 @@ import { Mermaid } from "./Mermaid";
 const remarkPlugins = [remarkGfm];
 
 const rehypePlugins = [
+  // Parse raw HTML embedded in Markdown into the tree…
   rehypeRaw,
+  // …then immediately sanitise it, before the trusted transform plugins below
+  // add their own markup. GitHub's `defaultSchema` allows only a known-safe set
+  // of tags/attributes: no <script>/<iframe>/<form>/<style>, no `on*` handlers,
+  // no inline `style`, `href` limited to http(s)/mailto/etc. (no `javascript:`
+  // or `data:`), `img` `src` limited to http(s) (no `data:`). Relative URLs and
+  // `code.language-*` (needed for Mermaid detection + highlighting) are kept.
+  [rehypeSanitize, defaultSchema],
   rehypeSlug,
   [
     rehypeAutolinkHeadings,
@@ -104,7 +113,6 @@ export function Markdown({
       <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins as never}
-        urlTransform={(url) => url}
         components={components}
       >
         {content}

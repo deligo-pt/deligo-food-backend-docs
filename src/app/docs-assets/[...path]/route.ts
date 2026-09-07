@@ -2,12 +2,16 @@ import { createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { getDocsContentDir } from "@/lib/config";
+import { getSession } from "@/lib/auth";
 
 /**
  * Streams a non-Markdown file co-located with the documentation, e.g. an image
  * referenced relatively from a `.md` file. Resolves strictly inside
- * `content/docs/` (no traversal) and never serves Markdown source. The whole
- * site is private, so `proxy.ts` already requires a session to reach this.
+ * `content/docs/` (no traversal) and never serves Markdown source.
+ *
+ * `proxy.ts` already gates this route, but it also verifies the session here
+ * independently: any request path that reaches a route handler without going
+ * through the proxy (e.g. an internal image-optimizer fetch) still gets nothing.
  */
 
 export const dynamic = "force-dynamic";
@@ -36,6 +40,10 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
+  if (!(await getSession())) {
+    return new Response("Not found", { status: 404 });
+  }
+
   const { path: segments } = await params;
   const root = getDocsContentDir();
   const target = path.resolve(root, ...segments);

@@ -58,6 +58,17 @@ export async function getSession(): Promise<SessionPayload | null> {
   return verifySessionToken(token);
 }
 
+/**
+ * Cookie attributes, shared by the set and clear paths so a logout deletes the
+ * exact cookie a login created.
+ *
+ * `httpOnly` (no JS access) + `secure` in production (HTTPS only) + `sameSite:
+ * "lax"` (not sent on cross-site POSTs) + `path: "/"` + no `domain` (host-only,
+ * not shared with any subdomain). The `__Host-` name prefix would add nothing
+ * here that these attributes do not already give, and it cannot be adopted
+ * without an environment-dependent cookie name because it mandates `Secure`,
+ * which is off for plain-HTTP local development.
+ */
 const cookieOptions = () =>
   ({
     httpOnly: true,
@@ -66,7 +77,7 @@ const cookieOptions = () =>
     path: "/",
   });
 
-/** Issue a session cookie. Returns `false` if auth is not configured. */
+/** Issue a fresh session cookie. Returns `false` if auth is not configured. */
 export async function startSession(): Promise<boolean> {
   const token = await signSessionToken();
   if (!token) return false;
@@ -77,7 +88,16 @@ export async function startSession(): Promise<boolean> {
   return true;
 }
 
-/** Clear the session cookie. */
+/**
+ * Clear the session cookie from the caller's browser (empty value, immediate
+ * expiry). Because sessions are stateless, this does not and cannot invalidate
+ * a token that was already copied off the device — that token stays valid until
+ * its own `exp` (≤ 24h) or the next `DOCS_AUTH_VERSION` bump.
+ */
 export async function endSession(): Promise<void> {
-  (await cookies()).set(SESSION_COOKIE, "", { ...cookieOptions(), maxAge: 0 });
+  (await cookies()).set(SESSION_COOKIE, "", {
+    ...cookieOptions(),
+    maxAge: 0,
+    expires: new Date(0),
+  });
 }

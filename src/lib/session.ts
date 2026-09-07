@@ -11,7 +11,18 @@
  */
 
 export const SESSION_COOKIE = "deligo_docs_session";
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
+/**
+ * Session lifetime: 24 hours. This is both the cookie `Max-Age` and the token's
+ * signed `exp`, so a token is worthless past this point on any device.
+ *
+ * The portal has no server-side session store, so this window is also the
+ * maximum time a *copied* token stays usable: signing out clears the browser's
+ * cookie but cannot invalidate a token that was already exported elsewhere.
+ * 24h keeps that exposure small while still covering a normal working day.
+ * `DOCS_AUTH_VERSION` remains the only way to revoke everything at once.
+ */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24; // 24 hours
 
 const SUBJECT = "docs";
 

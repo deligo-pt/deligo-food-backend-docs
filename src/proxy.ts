@@ -51,8 +51,11 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
 
 export const config = {
   // Everything except immutable build assets and the public metadata files.
-  // `_next/data` and `.rsc` requests are intentionally still matched.
+  // `_next/data` and `.rsc` requests are intentionally still matched. The image
+  // optimizer (`/_next/image`) is intentionally NOT excluded, so it cannot be
+  // used to hand private `content/docs` assets to an anonymous caller; the app
+  // renders plain <img> and the optimizer is disabled in `next.config.ts`.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
+    "/((?!_next/static|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };

@@ -9,24 +9,47 @@ export interface ResolvedLink {
 }
 
 const EXTERNAL_RE = /^(https?:)?\/\//i;
-const ABSOLUTE_SRC_RE = /^(https?:)?\/\/|^data:|^blob:|^\/|^#|^mailto:|^tel:/i;
+const ABSOLUTE_SRC_RE = /^(https?:)?\/\/|^\/|^#|^mailto:|^tel:/i;
+
+/**
+ * URL schemes that must never reach the DOM as an `href`/`src`. `rehype-sanitize`
+ * already strips these in the Markdown pipeline (see `Markdown.tsx`); this is a
+ * second, independent check at render time so a future pipeline change cannot
+ * silently re-open the hole.
+ */
+const DANGEROUS_SCHEMES = new Set([
+  "javascript",
+  "vbscript",
+  "data",
+  "blob",
+  "file",
+]);
+
+function isDangerousUrl(raw: string): boolean {
+  // Read the scheme ([a-z][a-z0-9+.-]* up to the first ":"), tolerating any
+  // leading whitespace a browser would ignore. Values reaching here have
+  // already been HTML-entity-decoded by the Markdown parser.
+  const match = /^\s*([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(raw);
+  return match !== null && DANGEROUS_SCHEMES.has(match[1].toLowerCase());
+}
 
 /**
  * Resolve an image `src` that appears inside a document.
  *
- * Absolute URLs, data/blob URIs and root-absolute paths are returned unchanged.
- * A relative reference (`./diagram.png`, `../assets/x.svg`) is resolved against
- * the current document's folder and rewritten to `/docs-assets/<path>`, which
- * streams the co-located file from `content/docs/` (auth-gated like everything
- * else). This is what lets a doc drop an image next to its Markdown and have it
- * just work.
+ * A dangerous scheme (`javascript:`, `data:`, `blob:`, …) is dropped. Absolute
+ * `http(s)` URLs and root-absolute paths are returned unchanged. A relative
+ * reference (`./diagram.png`, `../assets/x.svg`) is resolved against the current
+ * document's folder and rewritten to `/docs-assets/<path>`, which streams the
+ * co-located file from `content/docs/` (auth-gated like everything else). This
+ * is what lets a doc drop an image next to its Markdown and have it just work.
  */
 export function resolveAssetSrc(
   rawSrc: string | undefined,
   currentSlug: string[],
 ): string {
   const src = (rawSrc ?? "").trim();
-  if (!src || ABSOLUTE_SRC_RE.test(src)) return src;
+  if (!src || isDangerousUrl(src)) return "";
+  if (ABSOLUTE_SRC_RE.test(src)) return src;
 
   const dir = currentSlug.slice(0, -1);
   const stack = [...dir];
@@ -49,6 +72,7 @@ export function resolveDocLink(
   const href = (rawHref ?? "").trim();
 
   if (!href) return { href: "#", external: false };
+  if (isDangerousUrl(href)) return { href: "#", external: false };
   if (EXTERNAL_RE.test(href) || href.startsWith("mailto:") || href.startsWith("tel:")) {
     return { href, external: true };
   }
