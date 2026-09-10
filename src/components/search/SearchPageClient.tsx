@@ -52,7 +52,7 @@ export function SearchPageClient() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 focus-within:border-border-strong">
+      <div className="flex items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 transition-colors focus-within:border-accent-border focus-within:ring-2 focus-within:ring-(--ring)">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="shrink-0 text-fg-subtle" aria-hidden>
           <circle cx="11" cy="11" r="7" />
           <path d="m21 21-4.3-4.3" />
@@ -62,7 +62,7 @@ export function SearchPageClient() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search titles, headings and content…"
-          className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-fg-subtle"
+          className="h-12 flex-1 bg-transparent text-sm text-fg [outline:none]! placeholder:text-fg-subtle"
           spellCheck={false}
           autoComplete="off"
           aria-label="Search query"
