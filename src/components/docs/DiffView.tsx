@@ -2,14 +2,7 @@ import { Fragment } from "react";
 import type { DiffLineKind, DocDiff } from "@/types";
 import { formatDate } from "@/lib/format";
 
-/**
- * Renders a {@link DocDiff} as a two-gutter unified diff: old and new line
- * numbers on the left, a +/-/space marker and the raw line on the right.
- *
- * The line text is printed verbatim inside a `<pre>`-like cell — Markdown is
- * shown as plain diff text, never re-rendered as HTML, so a documentation
- * change reads the way it does in `git diff`.
- */
+
 export function DiffView({ diff }: { diff: DocDiff }) {
   const { commit } = diff;
 

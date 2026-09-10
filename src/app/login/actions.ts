@@ -26,16 +26,35 @@ function guessGuardDelay(): Promise<void> {
 }
 
 /**
- * Best-effort client identifier for per-client login throttling. Behind the
- * documented nginx reverse proxy the leftmost `X-Forwarded-For` entry is the
- * real client; a direct/proxy-less request falls back to one shared bucket.
- * Never contains credentials.
+ * Best-effort client identifier for per-client login throttling. Never contains
+ * credentials.
+ *
+ * Only values a trusted reverse proxy sets are used. The documented nginx config
+ * (see DEPLOYMENT.md) sends `X-Real-IP: $remote_addr` and rewrites
+ * `X-Forwarded-For` to `$remote_addr`, both overwriting anything the client
+ * sent, so `X-Real-IP` is preferred. The *leftmost* `X-Forwarded-For` entry is
+ * attacker-controlled — a client can prepend arbitrary values and mint a fresh
+ * throttle bucket per request — so it is never used; the *rightmost* entry (the
+ * hop the nearest proxy appended) is the safe fallback. With no proxy headers at
+ * all (e.g. a request straight to the loopback port) every caller shares one
+ * bucket rather than getting a free bucket from a spoofed header. nginx's own
+ * `limit_req`, keyed on the unforgeable TCP peer address, is the backstop for
+ * the direct-access case.
  */
 async function loginClientKey(): Promise<string> {
   const h = await headers();
+
+  const realIp = h.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+
   const forwardedFor = h.get("x-forwarded-for");
-  const first = forwardedFor?.split(",")[0]?.trim();
-  return first || h.get("x-real-ip")?.trim() || "unknown";
+  if (forwardedFor) {
+    const parts = forwardedFor.split(",");
+    const rightmost = parts[parts.length - 1]?.trim();
+    if (rightmost) return rightmost;
+  }
+
+  return "unknown";
 }
 
 export async function login(

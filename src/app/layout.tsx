@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   metadataBase: new URL(SITE.url),
   title: {
-    default: `${SITE.name} — Backend Documentation`,
+    default: SITE.name,
     template: `%s · ${SITE.name}`,
   },
   description: SITE.description,
@@ -29,7 +29,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full">
+      {/*
+        suppressHydrationWarning: browser extensions (WOT, Grammarly, …) inject
+        attributes onto <body> before React hydrates (e.g. `wotdisconnected`).
+        This flag is shallow — it only tolerates that first-level mismatch on
+        <body> itself, not on any child — so real markup bugs still surface.
+      */}
+      <body className="min-h-full" suppressHydrationWarning>
         <a
           href="#main-content"
           className="sr-only rounded-lg border border-border bg-bg-elevated px-3 py-2 text-sm font-medium text-fg shadow-pop focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[200]"

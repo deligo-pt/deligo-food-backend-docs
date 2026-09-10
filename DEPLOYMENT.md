@@ -23,28 +23,28 @@ Production target for the Deligo engineering documentation portal.
                     └─────────────────────────────────────────────┘
 ```
 
-* **Node server, not static export / not Vercel edge.** Authentication runs in
+- **Node server, not static export / not Vercel edge.** Authentication runs in
   `src/proxy.ts` (Next 16 proxy, Node runtime), so the app must run as a real
   Node process (`next start`). `output: export` is impossible; a Node platform
   or a plain VM both work.
-* **Documentation ships inside this repository** under `content/`. There is no
+- **Documentation ships inside this repository** under `content/`. There is no
   external docs repo, no clone step, and no doc-source environment variable.
   `git pull` + rebuild is the whole content-update path.
-* **Content is never exposed as raw files by the running app.** Only rendered
+- **Content is never exposed as raw files by the running app.** Only rendered
   pages and the session-checked search index are served; there is no route that
   returns Markdown source or `.git`.
-* Per-file "last updated" dates and history come from *this* repo's git log, so
+- Per-file "last updated" dates and history come from _this_ repo's git log, so
   deploy with the `.git` directory present (a normal `git clone`, not a tarball).
 
 ## Environment variables (production)
 
-| Variable | Required | Example | Notes |
-| --- | --- | --- | --- |
-| `NODE_ENV` | yes | `production` | Enables the `Secure` cookie flag. |
-| `DOCS_ACCESS_PASSWORD` | yes | *(32+ random chars)* | Shared login password. Distribute out of band. |
-| `DOCS_SESSION_SECRET` | yes | `openssl rand -base64 32` | HMAC key for the session cookie. Rotating it logs everyone out. |
-| `DOCS_AUTH_VERSION` | yes | `1` | Session epoch (positive integer). Increment to revoke every existing session immediately, without rotating `DOCS_SESSION_SECRET`. |
-| `PORT` | no | `3000` | Port for `next start`. |
+| Variable               | Required | Example                   | Notes                                                                                                                                       |
+| ---------------------- | -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`             | yes      | `production`              | Enables the `Secure` cookie flag.                                                                                                           |
+| `DOCS_ACCESS_PASSWORD` | yes      | _(32+ random chars)_      | Shared login password. Distribute out of band. **Minimum 16 characters** — a shorter value makes the site fail closed (nobody can sign in). |
+| `DOCS_SESSION_SECRET`  | yes      | `openssl rand -base64 32` | HMAC key for the session cookie. Rotating it logs everyone out.                                                                             |
+| `DOCS_AUTH_VERSION`    | yes      | `1`                       | Session epoch (positive integer). Increment to revoke every existing session immediately, without rotating `DOCS_SESSION_SECRET`.           |
+| `PORT`                 | no       | `3000`                    | Port for `next start`.                                                                                                                      |
 
 The three `DOCS_*` values are the only configuration. Put them in the
 platform's secret store / a root-only `/etc/deligo-docs.env`, **never** in the
@@ -76,6 +76,15 @@ place. `app/next.config.ts` deliberately omits it.
 ### nginx
 
 ```nginx
+# --- http { } block (e.g. /etc/nginx/nginx.conf) ---------------------------
+# Brute-force throttle for the sign-in endpoint, keyed on the real TCP peer
+# address ($binary_remote_addr) — request headers cannot forge it. 5 requests
+# per minute sustained per client IP; the `burst` below absorbs short bursts
+# (form re-posts, fat-fingered retries) without a hard failure. This is the
+# outer of two layers: the app also runs an in-process 8-attempts / 15-minute
+# limiter. Loosen only if a shared corporate NAT trips it in normal use.
+limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+
 server {
     listen 443 ssl http2;
     server_name docs.deligo.pt;
@@ -88,13 +97,29 @@ server {
     # the domain to hstspreload.org.
     add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
 
+    # Send the real client IP as a single, proxy-controlled value. Use
+    # `$remote_addr`, NOT `$proxy_add_x_forwarded_for`: the latter keeps any
+    # client-supplied X-Forwarded-For prefix, which the app would otherwise
+    # trust as the login-throttle identity and an attacker could rotate per
+    # request to bypass it. `proxy_set_header` overwrites whatever the client
+    # sent, so a spoofed X-Real-IP / X-Forwarded-For never reaches the app.
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $remote_addr;
+    proxy_set_header   X-Forwarded-Proto https;
+    proxy_set_header   X-Forwarded-Host  $host;
+    proxy_set_header   Host              $host;
+
+    location = /login {
+        limit_req        zone=login burst=10 nodelay;
+        limit_req_status 429;
+
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+    }
+
     location / {
         proxy_pass         http://127.0.0.1:3000;
         proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
-        proxy_set_header   X-Forwarded-Proto https;
-        proxy_set_header   X-Forwarded-Host  $host;
-        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   Upgrade           $http_upgrade;
         proxy_set_header   Connection        "upgrade";
     }
@@ -107,6 +132,10 @@ server {
 }
 ```
 
+> The `proxy_set_header` lines sit at `server` scope so both `location` blocks
+> inherit them. If you add a `proxy_set_header` inside a `location`, nginx stops
+> inheriting the server-level ones in that block — re-add them there.
+
 > The application already emits `Content-Security-Policy`, `X-Frame-Options`,
 > `X-Content-Type-Options` and `Referrer-Policy`; the proxy only needs to add
 > HSTS. Do not let the proxy strip or override the app's headers.
@@ -115,17 +144,27 @@ server {
 
 ```
 docs.deligo.pt {
-    reverse_proxy 127.0.0.1:3000
     header Strict-Transport-Security "max-age=63072000; includeSubDomains"
+
+    reverse_proxy 127.0.0.1:3000 {
+        # Overwrite any client-supplied value with the real peer address, so the
+        # login throttle cannot be keyed on a spoofed header (see the nginx note).
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+    }
 }
 ```
 
+> Caddy has no built-in `limit_req`. For the equivalent per-IP login throttle
+> add the `caddy-ratelimit` plugin and a `rate_limit` matcher on `path /login`
+> (5r/m, small burst), or rely on the app's in-process limiter alone.
+
 ## Platform requirements
 
-* Node.js 20+ and `pnpm` (`corepack enable`).
-* `git` on the server — used for per-file "last updated" dates and document
+- Node.js 20+ and `pnpm` (`corepack enable`).
+- `git` on the server — used for per-file "last updated" dates and document
   history. Without it dates fall back to file mtime; nothing breaks.
-* A process manager for `next start` (systemd unit or pm2).
+- A process manager for `next start` (systemd unit or pm2).
 
 ## Deploy steps
 
@@ -188,46 +227,53 @@ Automate by running the above from CI on every push to the default branch.
 
 ## Content system
 
-* Every `*.md` / `*.mdx` file under `content/docs/` becomes a page at
+- Every `*.md` / `*.mdx` file under `content/docs/` becomes a page at
   `/docs/<path-without-extension>`. Folders become sidebar sections (a numeric
   prefix like `03-` sets order and is stripped from the label). Nothing about
   specific files or folders is hardcoded.
-* A root `content/docs/README.md` or `index.md`, if present, renders as the
+- A root `content/docs/README.md` or `index.md`, if present, renders as the
   `/docs` landing page.
-* Optional YAML frontmatter is honoured: `title`, `description`, `order`,
+- Optional YAML frontmatter is honoured: `title`, `description`, `order`,
   `category`, and `draft: true` / `published: false` to hide a file. Any other
   keys are preserved and available to future features.
-* Markdown support: headings, paragraphs, lists, tables, blockquotes, code
+- Markdown support: headings, paragraphs, lists, tables, blockquotes, code
   blocks with highlighting, Mermaid (```mermaid fences), links (relative doc
   links are resolved to routes), images, and GFM.
-* `content/changelog.md` and `content/decisions.md` feed the Change Log and
+- `content/changelog.md` and `content/decisions.md` feed the Change Log and
   Decision Log; both are optional and their pages show an empty state when the
   file is absent.
 
 ## Security / cache behaviour
 
-* Every request passes through `src/proxy.ts`; anonymous → `/login` (or `401`
+- Every request passes through `src/proxy.ts`; anonymous → `/login` (or `401`
   for `/api/*`). `/login` is the only public route.
-* `/api/search-index` is `force-dynamic` + session-checked; it is never a
+- Sign-in is rate-limited in two layers: nginx `limit_req` on `/login` keyed on
+  the real TCP peer address (unspoofable), and an in-process 8-attempts /
+  15-minute limiter in the app keyed on `X-Real-IP` (or the right-most
+  `X-Forwarded-For` hop). The proxy **must** set `X-Real-IP` / `X-Forwarded-For`
+  to `$remote_addr` as shown above; if it forwards a client-supplied value the
+  app-layer throttle can be bypassed.
+- `DOCS_ACCESS_PASSWORD` must be at least 16 characters or the site fails closed.
+- `/api/search-index` is `force-dynamic` + session-checked; it is never a
   cacheable build artifact.
-* `next.config.ts` sends `Cache-Control: private, no-store` + `X-Robots-Tag:
-  noindex` on every rendered response; only immutable `/_next/` assets stay
+- `next.config.ts` sends `Cache-Control: private, no-store` + `X-Robots-Tag:
+noindex` on every rendered response; only immutable `/_next/` assets stay
   publicly cacheable. `robots.txt` disallows all.
-* `next.config.ts` also sends a strict `Content-Security-Policy` (no
+- `next.config.ts` also sends a strict `Content-Security-Policy` (no
   `unsafe-eval`; `script-src`/`style-src` keep `'unsafe-inline'` — see the note
   in that file), `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, and
   `X-Content-Type-Options: nosniff`. `/docs-assets/*` keeps its own tighter
   per-response CSP. HSTS is added by the reverse proxy (see above).
-* Rendered Markdown is sanitised with `rehype-sanitize` (GitHub's default
+- Rendered Markdown is sanitised with `rehype-sanitize` (GitHub's default
   schema): embedded raw HTML is limited to a safe tag/attribute set, and
   `javascript:` / `data:` URLs in links and images are stripped.
-* Because the whole site is private, the reverse proxy must **not** add its own
+- Because the whole site is private, the reverse proxy must **not** add its own
   shared/`public` caching for `/` — leave caching to the app.
-* Sessions are stateless (no server store). A session cookie / token lasts
+- Sessions are stateless (no server store). A session cookie / token lasts
   **24 hours** (`SESSION_MAX_AGE_SECONDS`); after that the token's signed `exp`
   fails and the user signs in again.
-* Signing out clears the browser's cookie only. It cannot invalidate a token
+- Signing out clears the browser's cookie only. It cannot invalidate a token
   that was already copied off the device — that copy stays valid until its 24h
-  `exp`. To revoke *everything* immediately (e.g. the shared password leaked, or
+  `exp`. To revoke _everything_ immediately (e.g. the shared password leaked, or
   a token was exfiltrated), increment `DOCS_AUTH_VERSION` and restart: every
   token minted under the old value is rejected on its next request.

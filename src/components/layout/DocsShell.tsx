@@ -7,11 +7,7 @@ import { Sidebar } from "./Sidebar";
 import { LogoutButton } from "./LogoutButton";
 import { cn } from "@/lib/cn";
 
-/**
- * Documentation layout: full-width header, a persistent left sidebar on desktop,
- * an off-canvas drawer on smaller screens, and the page content (which may add
- * its own right-hand table of contents).
- */
+
 export function DocsShell({
   nav,
   children,

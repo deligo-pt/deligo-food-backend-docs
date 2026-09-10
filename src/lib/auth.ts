@@ -11,13 +11,16 @@ import {
 
 const encoder = new TextEncoder();
 
+/** Minimum length for `DOCS_ACCESS_PASSWORD`; shorter values fail closed. */
+export const MIN_ACCESS_PASSWORD_LENGTH = 16;
+
 /** True when every auth environment variable is set to a usable value. */
 export function authConfigured(): boolean {
   const password = process.env.DOCS_ACCESS_PASSWORD;
   const secret = process.env.DOCS_SESSION_SECRET?.trim();
   return Boolean(
     password &&
-      password.length > 0 &&
+      password.length >= MIN_ACCESS_PASSWORD_LENGTH &&
       secret &&
       secret.length >= 16 &&
       currentAuthVersion() !== null,

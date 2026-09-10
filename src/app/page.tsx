@@ -59,7 +59,7 @@ export default function HomePage() {
             Internal Engineering Portal
           </p>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight text-fg text-balance sm:text-[2.5rem] sm:leading-[1.1]">
-            Deligo Engineering
+            DeliGo Backend Docs
           </h1>
           <p className="mt-3.5 text-[0.975rem] leading-relaxed text-fg-muted text-pretty">
             {SITE.description}

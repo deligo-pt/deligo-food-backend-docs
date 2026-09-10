@@ -11,13 +11,7 @@ export interface SelectFilter {
   options: { value: string; label: string }[];
 }
 
-/**
- * Filter controls for the Change Log / Decision Log.
- *
- * Current values come from the server (parsed from the URL there); changing a
- * control pushes a new URL and the server re-renders the filtered list — so
- * filtered views stay server-rendered and shareable, with no loading state.
- */
+
 export function FilterBar({
   filters,
   values,

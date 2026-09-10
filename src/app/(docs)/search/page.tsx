@@ -5,7 +5,7 @@ import { SearchPageClient } from "@/components/search/SearchPageClient";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search the Deligo engineering documentation.",
+  description: "Search the DeliGo Backend Docs.",
 };
 
 export default function SearchPage() {

@@ -2,10 +2,7 @@ import type { ReactNode } from "react";
 import type { TocItem } from "@/types";
 import { TableOfContents } from "./TableOfContents";
 
-/**
- * Two-column reading frame: a measure-capped article column and an optional
- * sticky table of contents on wide screens.
- */
+
 export function DocArticle({
   toc = [],
   children,

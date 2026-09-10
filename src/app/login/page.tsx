@@ -38,7 +38,7 @@ export default function LoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-fg-subtle">
-          Deligo Engineering — authorized personnel only
+          DeliGo Backend Docs — authorized personnel only
         </p>
       </div>
     </main>

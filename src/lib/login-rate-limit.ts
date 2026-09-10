@@ -6,8 +6,10 @@ import "server-only";
  * Scope: deliberately minimal and matched to the documented deployment — one
  * Node process behind an nginx reverse proxy (see `DEPLOYMENT.md`). State lives
  * in this process only: it is not shared across instances and is cleared on
- * restart. That is acceptable here (short window, rare restarts, and the edge
- * proxy can layer its own `limit_req` on top). This does not touch the
+ * restart. That is acceptable here (short window, rare restarts) and it is the
+ * inner of two layers: the documented nginx config also runs `limit_req` on
+ * `/login`, keyed on the unforgeable TCP peer address (see `DEPLOYMENT.md`).
+ * This does not touch the
  * authentication/session architecture — it only decides whether a login attempt
  * is allowed to proceed.
  *

@@ -67,7 +67,7 @@ export function Sidebar({
       <div className="flex items-center gap-2 px-3">
         <span className="size-1.5 rounded-full bg-accent" aria-hidden />
         <p className="text-[0.6875rem] font-semibold tracking-[0.16em] text-fg-subtle uppercase">
-          Deligo Engineering
+          DeliGo Backend Docs
         </p>
       </div>
 

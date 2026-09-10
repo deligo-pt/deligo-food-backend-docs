@@ -1,4 +1,4 @@
-# Deligo Engineering — Documentation Website
+# Deligo Food Delivery Backend — Documentation Website
 
 Internal, authenticated documentation portal for the **Deligo food-delivery
 platform**.
@@ -13,15 +13,15 @@ a shared-password session; see `DEPLOYMENT.md`).
 
 ## Stack
 
-| Concern | Choice |
-| --- | --- |
-| Framework | Next.js 16 (App Router) + React 19 |
-| Language | TypeScript (strict) |
-| Styling | Tailwind CSS v4 + `@tailwindcss/typography` |
-| Markdown | `react-markdown` + `remark-gfm` + `rehype-raw` / `rehype-slug` / `rehype-autolink-headings` / `rehype-highlight`; frontmatter via `gray-matter` |
-| Diagrams | `mermaid` (rendered client-side from ```` ```mermaid ```` blocks) |
-| Theme | `next-themes` (light / dark / system, persisted) |
-| Auth | stateless HMAC-signed session cookie + Next 16 `proxy.ts` gate |
+| Concern   | Choice                                                                                                                                          |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Framework | Next.js 16 (App Router) + React 19                                                                                                              |
+| Language  | TypeScript (strict)                                                                                                                             |
+| Styling   | Tailwind CSS v4 + `@tailwindcss/typography`                                                                                                     |
+| Markdown  | `react-markdown` + `remark-gfm` + `rehype-raw` / `rehype-slug` / `rehype-autolink-headings` / `rehype-highlight`; frontmatter via `gray-matter` |
+| Diagrams  | `mermaid` (rendered client-side from ` ```mermaid ` blocks)                                                                                     |
+| Theme     | `next-themes` (light / dark / system, persisted)                                                                                                |
+| Auth      | stateless HMAC-signed session cookie + Next 16 `proxy.ts` gate                                                                                  |
 
 ---
 
@@ -38,23 +38,23 @@ directory empty.
 
 ### Scripts
 
-| Command | Purpose |
-| --- | --- |
-| `pnpm dev` | Development server |
-| `pnpm build` | Production build (statically renders every doc page) |
-| `pnpm start` | Serve the production build |
-| `pnpm lint` | ESLint |
-| `pnpm typecheck` | `tsc --noEmit` |
+| Command          | Purpose                                              |
+| ---------------- | ---------------------------------------------------- |
+| `pnpm dev`       | Development server                                   |
+| `pnpm build`     | Production build (statically renders every doc page) |
+| `pnpm start`     | Serve the production build                           |
+| `pnpm lint`      | ESLint                                               |
+| `pnpm typecheck` | `tsc --noEmit`                                       |
 
 ---
 
 ## Environment variables
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `DOCS_ACCESS_PASSWORD` | Yes | Shared password for the `/login` page. |
-| `DOCS_SESSION_SECRET` | Yes | HMAC key (≥16 chars) that signs the session cookie. |
-| `DOCS_AUTH_VERSION` | Yes | Positive integer session epoch; increment to revoke all sessions. |
+| Variable               | Required | Description                                                       |
+| ---------------------- | -------- | ----------------------------------------------------------------- |
+| `DOCS_ACCESS_PASSWORD` | Yes      | Shared password for the `/login` page.                            |
+| `DOCS_SESSION_SECRET`  | Yes      | HMAC key (≥16 chars) that signs the session cookie.               |
+| `DOCS_AUTH_VERSION`    | Yes      | Positive integer session epoch; increment to revoke all sessions. |
 
 Any missing/invalid value keeps the site locked (fails closed). `.env.local` is
 git-ignored; `.env.example` is committed. There is no documentation-source
@@ -91,7 +91,7 @@ content/
 
 ### Git history
 
-`lib/git.ts` reads *this* repo's history:
+`lib/git.ts` reads _this_ repo's history:
 
 - `getLastCommit(file)` / `getLastModified(file)` — the "last updated" line on
   each page (falls back to filesystem mtime, then nothing — never fabricated).

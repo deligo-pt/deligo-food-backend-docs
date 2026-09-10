@@ -38,10 +38,11 @@ export function getDecisionsFile(): string {
 }
 
 export const SITE = {
-  name: "Deligo Engineering",
-  shortName: "Deligo Docs",
+  name: "DeliGo Backend Docs",
+  shortName: "DeliGo Backend Docs",
+  tagline: "Backend Engineering Documentation",
   description:
-    "Internal engineering documentation for the Deligo food-delivery platform — architecture, modules, API surface, data model, operations, and the change & decision logs.",
+    "Backend engineering documentation for the DeliGo food-delivery platform — architecture, modules, API surface, data model, operations, and the change & decision logs.",
   url: "https://docs.deligo.pt",
 } as const;
 

@@ -17,7 +17,6 @@ export function DocHeading({
     DocMeta,
     "lastModified" | "lastModifiedSource" | "category" | "relPath"
   >;
-  /** When set, a "View changes" link to the document's latest-diff view. */
   changesHref?: string | null;
 }) {
   const date = formatDate(meta?.lastModified);
