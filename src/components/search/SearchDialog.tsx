@@ -155,24 +155,26 @@ export function SearchDialog({
         className="animate-scale-in shadow-float relative w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-bg-elevated"
         onKeyDown={onKeyDown}
       >
-        <div className="flex items-center gap-3 border-b border-border px-4">
-          <SearchIcon />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setActive(0);
-            }}
-            placeholder="Search titles, headings and content…"
-            className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-fg-subtle"
-            autoComplete="off"
-            spellCheck={false}
-            aria-label="Search query"
-          />
-          <kbd className="hidden rounded border border-border bg-bg-subtle px-1.5 py-0.5 text-[0.625rem] text-fg-subtle sm:block">
-            ESC
-          </kbd>
+        <div className="border-b border-border p-3">
+          <div className="flex items-center gap-2.5 rounded-xl border border-border bg-bg px-3.5 transition-colors focus-within:border-accent-border focus-within:ring-2 focus-within:ring-(--ring)">
+            <SearchIcon />
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              placeholder="Search titles, headings and content…"
+              className="h-11 flex-1 bg-transparent text-sm text-fg [outline:none]! placeholder:text-fg-subtle"
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="Search query"
+            />
+            <kbd className="hidden shrink-0 rounded border border-border bg-bg-subtle px-1.5 py-0.5 text-[0.625rem] text-fg-subtle sm:block">
+              ESC
+            </kbd>
+          </div>
         </div>
 
         <div className="max-h-[min(60vh,26rem)] overflow-y-auto custom-scroll">
