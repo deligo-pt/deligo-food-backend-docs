@@ -226,11 +226,70 @@ distinct from `Wallet`.
 ## Configuration: `GlobalSettings`
 
 A single document (seeded on boot) holding platform-wide numbers the order math
-reads: `delivery` pricing (base charge, per-km, min/max, free-above, max
-distance, VAT), `commission` (`platformPercent`, `platformVatRate`,
-`fleetManagerPercent`, `serviceCharge`), `ingredientsOrder` charges, order
-rules, and referral milestones. Changing this document changes pricing for all
-*future* orders only — existing orders keep their snapshot.
+reads: `delivery` pricing (tiered per-km rate, distance threshold, VAT),
+`commission` (`fleetManagerPercent`, `serviceCharge`, `serviceChargeVatRate`),
+`ingredientsOrder` charges, order rules, and referral milestones. Changing this
+document changes pricing for all *future* orders only — existing orders keep
+their snapshot. The platform commission is **not** stored here; see below.
+
+### Platform commission (effective-dated)
+
+The platform commission lives only in the **`CommissionRate`** collection. The
+rate applied at checkout is resolved by
+`GlobalSettingsService.getGlobalSettings()`: the latest `ACTIVE` rate that has
+started. If none is found, checkout fails with `COMMISSION_RATE_NOT_CONFIGURED`
+rather than pricing at 0%.
+
+| Field | Purpose |
+| --- | --- |
+| `agreementVersionId` | The vendor agreement the rate belongs to. May be a **draft**. On the baseline it is the latest effective vendor agreement at seed time (informational). |
+| `platformPercent` / `platformVatRate` | The commission and the VAT on it |
+| `effectiveFrom` | Stored **only on the baseline** (beginning of time). An agreement-linked rate has no date of its own: it starts when its agreement does, read from `AgreementVersion.effectiveFrom` at lookup time |
+| `isBaseline` | The single starting rate, in force from the beginning |
+| `status` | `ACTIVE` or `CANCELLED` (only possible before the rate has started) |
+
+A rate has started when its agreement is `PUBLISHED`/`ARCHIVED` and that
+agreement's `effectiveFrom` has passed. A rate on a draft agreement is inert
+until the draft is published, and follows the agreement if its date is edited.
+
+The baseline row is seeded on boot (`utils/seeding.ts`, after the settings
+transaction): it is based on the **latest effective vendor agreement** at
+**15%** commission and 23% VAT. On databases that predate the schedule it is
+copied from the old `GlobalSettings.commission.platformPercent` /
+`platformVatRate` instead (still in the document, now ignored). With no
+published vendor agreement yet it is created unlinked, and linked on a later
+boot. An existing unlinked baseline is linked the same way.
+
+Because the rate starts at the agreement's `effectiveFrom`, it lines up with the
+re-sign gate: from that instant a vendor who has not signed is blocked from
+orders, so every vendor able to sell is on the new rate. Orders keep the rate
+they were priced at (`items[].commission`, `payoutSummary.deliGoCommission`);
+the offer engine reuses the checkout's snapshotted rate rather than re-reading
+it. One active rate per agreement and one active baseline (unique partial
+indexes). Admin API: `/api/v1/commission-rates`.
+
+The Agreement module and `POST /agreement-versions/:id/publish` know nothing
+about commission — this is by design. The **frontend** decides when a rate is
+needed: if the commission changed for a new vendor agreement version, it calls
+`POST /commission-rates` for that (draft or not-yet-effective) version, before
+or after publishing; if unchanged, it calls nothing, and the previous rate
+keeps applying. The unique partial index on `agreementVersionId` (ACTIVE only)
+is what actually enforces "one active rate per version, and once created it
+can't be created again" — there is no server-side rule tying agreement publish
+to a commission decision.
+
+### Delivery fee (food orders)
+
+The distance charge is **marginal**: the first `delivery.distanceThresholdKm`
+(default 5) are billed at `delivery.chargePerKm`, and only the km beyond the
+threshold at `delivery.chargePerKmBeyondThreshold` (falls back to
+`chargePerKm` when unset; send `null` to clear it). There is no fixed base charge. VAT is then added on
+top of the net charge.
+
+Example with threshold 5 km, near rate 1.00, far rate 1.50: a 7 km order costs
+5 × 1.00 + 2 × 1.50 = 8.00 net. Pickup orders are always 0. If the Google
+distance lookup fails, checkout is rejected with `DISTANCE_CALCULATION_FAILED`
+rather than pricing the delivery at 0.
 
 ## Operational / audit collections
 

@@ -1,0 +1,365 @@
+---
+title: Order Lifecycle
+description: The statuses an order moves through, the delivery and self-pickup flows, who or what may trigger each transition, and the rules and restrictions around them, as implemented in the Order module.
+order: 1
+---
+
+# Order Lifecycle
+
+This page describes the order state machine exactly as implemented. The status
+values live in `modules/Order/order.constant.ts` (`ORDER_STATUS`); the
+transitions are enforced in `modules/Order/order.service.ts` and, for
+time-driven changes, `cron/order.cron.ts`. Source paths on this page are given
+relative to the backend's `src/app/` directory.
+
+---
+
+## Overview
+
+- An order is created **only after payment is verified**, always as `PENDING`
+  (`finalizeCheckoutIntoOrder`, reached from `POST /orders/create-order` or the
+  payment gateway notification). Nothing about checkout or payment is covered
+  here.
+- The current status is `Order.orderStatus` (default `PENDING`). Every change is
+  also recorded in `Order.statusHistory[]` (`status`, `timestamp`, optional
+  `updatedBy` and `note`). System-triggered entries carry a `note` and no
+  `updatedBy`.
+- `fulfillmentType` (`DELIVERY` or `PICKUP`) decides which flow applies.
+- There is **no generic "set status" endpoint**. Each transition is a dedicated
+  service function with its own preconditions, listed below. Rider, dispatch,
+  automatic, and pickup-verification transitions use a conditional
+  `findOneAndUpdate` on the expected current status, so a stale or repeated
+  request does not move the order. Vendor actions (accept, reject, mark ready,
+  mark no-show, all in `updateOrderStatusByVendor`) and customer cancel instead
+  load the order and check its status inside a transaction.
+- Who can change an order's status:
+
+| Actor | What it can do to status |
+| --- | --- |
+| Vendor / sub-vendor (owning `vendorId`) | Accept, reject, mark ready (pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
+| Delivery partner | Accept a dispatch offer, then `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, or hand the order back (`REASSIGNMENT_NEEDED`) |
+| Customer | Cancel only |
+| Admin / super admin | Manually assign a rider to an order awaiting one; no other status changes |
+| System (cron / worker) | Auto-accept, auto-dispatch and retry, dispatch expiry, escalation, auto-ready, auto no-show |
+
+---
+
+## Delivery Order Lifecycle
+
+```mermaid
+flowchart TD
+    P["PENDING"] -->|"vendor accepts / auto-accept"| PR["PREPARING"]
+    P -->|"vendor rejects"| RJ["REJECTED"]
+    PR -->|"auto-dispatch cron / vendor broadcast"| D["DISPATCHING"]
+    D -->|"rider accepts"| A["ASSIGNED"]
+    D -->|"all riders reject / window expires / no rider found"| W["AWAITING_PARTNER"]
+    W -->|"retry cron / vendor broadcast"| D
+    W -->|"admin assigns rider"| A
+    A -->|"rider hands order back"| R["REASSIGNMENT_NEEDED"]
+    R -->|"retry cron / vendor broadcast"| D
+    R -->|"escalation after estimatedReadyAt"| W
+    A -->|"auto-ready cron at estimatedReadyAt"| RP["READY_FOR_PICKUP"]
+    RP -->|"rider picks up (delivery OTP generated)"| PU["PICKED_UP"]
+    PU -->|"rider"| OW["ON_THE_WAY"]
+    OW -->|"rider enters delivery OTP"| DL["DELIVERED"]
+```
+
+The customer can also cancel from any non-terminal status (see
+[Status Transition Rules](#status-transition-rules)), which ends in `CANCELED`.
+
+Points that are easy to miss:
+
+- **Accepting jumps straight to `PREPARING`.** The accept writes `ACCEPTED` and
+  `PREPARING` to the history but persists `PREPARING` (see
+  [Statuses that are not part of the normal flow](#statuses-that-are-not-part-of-the-normal-flow)).
+- **`READY_FOR_PICKUP` on a delivery order is set only by the auto-ready cron**,
+  and only from `ASSIGNED`. A rider cannot set it, and a rider can move to
+  `PICKED_UP` only from `READY_FOR_PICKUP`. The vendor's `READY_FOR_PICKUP`
+  action is rejected for delivery orders.
+- **A rider can hand the order back only from `ASSIGNED`.** Once the order is
+  `READY_FOR_PICKUP` or later, `REASSIGNMENT_NEEDED` is no longer allowed.
+- Dispatch mechanics (rider search, offer window, pool handling) are outside the
+  scope of this page; only their effect on status is described.
+
+---
+
+## Customer Pickup Lifecycle
+
+```mermaid
+flowchart TD
+    P["PENDING"] -->|"vendor accepts / auto-accept"| PR["PREPARING"]
+    P -->|"vendor rejects"| RJ["REJECTED"]
+    PR -->|"vendor marks ready / auto-ready cron at estimatedReadyAt"| RP["READY_FOR_PICKUP"]
+    RP -->|"vendor verifies customer's pickup code"| PC["PICKED_UP_BY_CUSTOMER"]
+    RP -->|"vendor after grace / no-show cron"| NS["NO_SHOW"]
+```
+
+- A `PICKUP` order never enters the dispatch states (`DISPATCHING`,
+  `AWAITING_PARTNER`, `ASSIGNED`, `REASSIGNMENT_NEEDED`); manual broadcast and
+  admin assignment reject pickup orders.
+- The pickup slot (a future half-hour slot within the vendor's hours and closing
+  days) is validated at checkout, and a six-digit `pickup.code` is generated
+  with the order.
+- The customer can cancel from any non-terminal status, including
+  `READY_FOR_PICKUP`.
+
+---
+
+## Status Definitions
+
+All 15 values of `ORDER_STATUS`.
+
+| Status | Meaning | Flow | Terminal? |
+| --- | --- | --- | --- |
+| `PENDING` | Paid, waiting for the vendor's response | Both | No |
+| `ACCEPTED` | Vendor acceptance; written to history only, the order rests in `PREPARING` | Both | No (transient) |
+| `REJECTED` | Vendor rejected a `PENDING` order | Both | Yes |
+| `PREPARING` | Accepted and being prepared; `estimatedReadyAt` is set | Both | No |
+| `DISPATCHING` | Offered to a pool of riders | Delivery | No |
+| `AWAITING_PARTNER` | No rider currently holds the order (offers ended or none found) | Delivery | No |
+| `ASSIGNED` | A rider is assigned (accepted an offer or was assigned by an admin) | Delivery | No |
+| `REASSIGNMENT_NEEDED` | The assigned rider handed the order back; partner cleared | Delivery | No |
+| `READY_FOR_PICKUP` | Food is ready: for delivery, the rider may collect it; for pickup, the customer may collect it | Both | No |
+| `PICKED_UP` | Rider collected the order; delivery OTP generated | Delivery | No |
+| `ON_THE_WAY` | Rider is delivering | Delivery | No |
+| `DELIVERED` | Handed over, delivery OTP verified | Delivery | Yes |
+| `PICKED_UP_BY_CUSTOMER` | Vendor verified the pickup code | Pickup | Yes |
+| `CANCELED` | Canceled by the customer | Both | Yes |
+| `NO_SHOW` | Pickup order never collected | Pickup | Yes |
+
+---
+
+## Status Transition Rules
+
+Every implemented transition. "Actor" is the role or system component that
+triggers it.
+
+| # | From → To | Actor / trigger | Conditions | Source |
+| --- | --- | --- | --- | --- |
+| 1 | *(none)* → `PENDING` | Customer confirms after verified payment, or the gateway notification | Checkout summary owned by the customer, token matches, not already converted | `finalizeCheckoutIntoOrder` |
+| 2 | `PENDING` → `PREPARING` | Vendor `ACCEPTED` (manual accept) | Vendor/sub-vendor owns the order and its profile is `APPROVED`; order is paid; current status is `PENDING`; `preparationTime` ≥ 1 (validated) | `updateOrderStatusByVendor` |
+| 2b | `PENDING` → `PREPARING` | System: auto-accept | Only `autoAcceptDeadlineAt` has passed (`autoAcceptTimeoutMinutes`, default 10) and the order is still `PENDING`. The ownership, `APPROVED`-profile, paid and `preparationTime` checks of row 2 are not applied; the vendor's default preparation time is used | `autoAcceptOrder` |
+| 3 | `PENDING` → `REJECTED` | Vendor `REJECTED` | Same ownership/approval/paid checks; current status must be `PENDING`; `reason` required | `updateOrderStatusByVendor` |
+| 4 | `PREPARING` → `DISPATCHING` | System: auto-dispatch | Delivery order, no rider, empty pool, `estimatedReadyAt` within `autoDispatchLeadMinutes` (default 15) | `autoDispatchOrder` |
+| 4b | `ACCEPTED` / `PREPARING` / `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `DISPATCHING` | Vendor `broadcast-order` | Delivery order; vendor `APPROVED` with a session location; pool currently empty | `broadcastOrderToPartners` |
+| 5 | `AWAITING_PARTNER` → `DISPATCHING` | System: retry | `dispatchExpiresAt` passed and `estimatedReadyAt` still in the future | `autoRetryDispatchOrder` |
+| 5b | `REASSIGNMENT_NEEDED` → `DISPATCHING` | System: retry | No rider, empty pool, `estimatedReadyAt` in the future | `autoRetryReassignmentOrder` |
+| 6 | `DISPATCHING` → `ASSIGNED` | Delivery partner `ACCEPT` | Rider `APPROVED`, has no active order, is in the live pool and not previously rejected, window not expired; only one rider wins | `partnerAcceptsDispatchedOrder` |
+| 7 | `DISPATCHING` → `AWAITING_PARTNER` | Last rider in the pool rejects | Rider was in the pool | `partnerAcceptsDispatchedOrder` |
+| 7b | `DISPATCHING` → `AWAITING_PARTNER` | System: window expired | `dispatchExpiresAt` passed. Done by the cron, or by a rider's late accept or late reject request (the expiry check runs before the action is looked at) | `handleOrderExpiryCron`, `partnerAcceptsDispatchedOrder` |
+| 7c | `DISPATCHING` → `AWAITING_PARTNER` | System: no eligible rider | Dispatch found no rider (manual broadcast then returns `NO_PARTNER_FOUND`); `dispatchExpiresAt` is set to about now + 120 seconds | `dispatchOrderToPartners` |
+| 7d | `DISPATCHING` → `AWAITING_PARTNER` | System: vendor location missing | Auto-dispatch, dispatch retry, or reassignment retry found that the vendor's `businessLocation` has no numeric longitude/latitude, so no rider search ran; `dispatchExpiresAt` is set to about now + 120 seconds. The retry cron can pick the order up again (row 5) until `estimatedReadyAt` passes, after which it is escalated | `autoDispatchOrder`, `autoRetryDispatchOrder`, `autoRetryReassignmentOrder` |
+| 8 | `AWAITING_PARTNER` → `ASSIGNED` | Admin assigns a rider | Delivery order in `AWAITING_PARTNER` without a rider; rider approved, idle and free (checked at write time) | `assignDeliveryPartnerByAdmin` |
+| 9 | `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `AWAITING_PARTNER` (escalated) | System: escalation | `estimatedReadyAt` passed (or unset) and not already escalated; done once until a rider is assigned (`dispatchEscalatedAt` is set on escalation and reset to `null` when a rider is assigned); automatic dispatch stops | `autoEscalateDispatchOrder` |
+| 10 | `ASSIGNED` → `REASSIGNMENT_NEEDED` | Delivery partner | Rider is the assigned rider; `reason` required; clears the partner and blocks that rider for this order | `updateOrderStatusByDeliveryPartner` |
+| 11 | `ASSIGNED` → `READY_FOR_PICKUP` | System: auto-ready | Delivery order; `estimatedReadyAt` has passed | `autoReadyOrder` |
+| 11b | `PREPARING` → `READY_FOR_PICKUP` | Vendor `READY_FOR_PICKUP` | Pickup order only; current status `PREPARING` | `updateOrderStatusByVendor` |
+| 11c | `PREPARING` → `READY_FOR_PICKUP` | System: auto-ready | Pickup order; `estimatedReadyAt` has passed | `autoReadyOrder` |
+| 12 | `READY_FOR_PICKUP` → `PICKED_UP` | Delivery partner | Assigned rider; generates the six-digit delivery OTP | `updateOrderStatusByDeliveryPartner` |
+| 13 | `PICKED_UP` → `ON_THE_WAY` | Delivery partner | Assigned rider | `updateOrderStatusByDeliveryPartner` |
+| 14 | `ON_THE_WAY` → `DELIVERED` | Delivery partner | Assigned rider; correct six-digit OTP; at most five failed attempts. The OTP is validated before the `ON_THE_WAY` status precondition (see "Delivery OTP" below) | `updateOrderStatusByDeliveryPartner` |
+| 15 | `READY_FOR_PICKUP` → `PICKED_UP_BY_CUSTOMER` | Vendor verifies the pickup code | Pickup order owned by the vendor, status `READY_FOR_PICKUP`, code matches | `verifyPickupCode` |
+| 16 | `READY_FOR_PICKUP` → `NO_SHOW` | Vendor `NO_SHOW` | Pickup order; current status `READY_FOR_PICKUP`; at least 15 minutes past the later of the promised pickup time and the ready time | `updateOrderStatusByVendor` |
+| 16b | `READY_FOR_PICKUP` → `NO_SHOW` | System | Same grace has elapsed, or the vendor's closing time has passed | `autoMarkOrderNoShow` |
+| 17 | any non-terminal → `CANCELED` | Customer | See "Customer cancellation" below | `cancelOrderByCustomer` |
+
+Guards that apply to the vendor action endpoint as a whole: repeating the
+current status returns `ORDER_ALREADY_IN_STATUS`; only `ACCEPTED`, `REJECTED`,
+`READY_FOR_PICKUP`, and `NO_SHOW` are accepted as `type`.
+
+**Customer cancellation.** The customer must own the order, the order must be
+paid, and a `reason` is required. Cancellation is refused only from the
+terminal statuses `CANCELED`, `REJECTED`, `DELIVERED`, `PICKED_UP_BY_CUSTOMER`,
+and `NO_SHOW`. It is therefore allowed in every other status, including after
+rider assignment and after pickup (`PICKED_UP`, `ON_THE_WAY`). It clears the
+dispatch pool, frees an assigned rider, and (for non-`RESTAURANT` vendors,
+which are the ones whose stock is deducted) restores stock for the stages where
+it had been deducted (`ACCEPTED`, `AWAITING_PARTNER`, `DISPATCHING`,
+`REASSIGNMENT_NEEDED`, `ASSIGNED`, `PREPARING`, `READY_FOR_PICKUP`). Stock is
+not restored when canceling from `PICKED_UP` or `ON_THE_WAY`.
+
+---
+
+## Role-Based Actions
+
+| Role | Endpoint | Status effect | Access checks |
+| --- | --- | --- | --- |
+| `CUSTOMER` | `PATCH /orders/:orderId/cancel` | → `CANCELED` | `auth('CUSTOMER')`; order must belong to the customer |
+| `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/status` | `ACCEPTED` (→ `PREPARING`), `REJECTED`, `READY_FOR_PICKUP`, `NO_SHOW` | `auth('VENDOR','SUB_VENDOR')`; the order's `vendorId` must be the caller's own profile; profile must be `APPROVED` |
+| `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/verify-pickup` | → `PICKED_UP_BY_CUSTOMER` | `auth('VENDOR','SUB_VENDOR')`; owns the order |
+| `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/broadcast-order` | → `DISPATCHING` | `auth('VENDOR','SUB_VENDOR')`; owns the order; `APPROVED`; delivery orders only |
+| `DELIVERY_PARTNER` | `PATCH /orders/:orderId/accept-dispatch-order` | `DISPATCHING` → `ASSIGNED` (accept) or rejection | `auth('DELIVERY_PARTNER')`; `APPROVED`; must be in the live pool |
+| `DELIVERY_PARTNER` | `PATCH /orders/:orderId/update-order-status` | `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, `REASSIGNMENT_NEEDED` | `auth('DELIVERY_PARTNER')`; `deliveryPartnerId` must be the caller |
+| `ADMIN`, `SUPER_ADMIN` | `PATCH /orders/:orderId/assign-partner` | `AWAITING_PARTNER` → `ASSIGNED` | `auth('ADMIN','SUPER_ADMIN',['CAN_MANAGE_ORDERS'])`; the permission is enforced only for `ADMIN` |
+| `FLEET_MANAGER` | none | Read-only: sees the orders of its managed riders in the order list | — |
+
+Additional notes:
+
+- A parent `VENDOR` and its `SUB_VENDOR` branches each act only on orders whose
+  `vendorId` is their own profile; a parent cannot change a branch's orders.
+- Approved `VENDOR` accounts are covered by the agreement gate for all
+  `/orders` requests (a `SUB_VENDOR` is covered through its parent's
+  agreement); an unsigned or outdated agreement blocks these routes. See
+  [Authorization](../03-identity-access/authorization.md).
+- The rider status endpoint checks the caller's role and that the order is
+  assigned to the caller, but does not check the rider profile's `APPROVED`
+  status; accepting a dispatch offer does.
+- The Zod schemas (`order.validation.ts`) restrict the accepted values:
+  vendors may send only the four `type` values; riders only
+  `REASSIGNMENT_NEEDED`, `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, and
+  `DELIVERED` requires a six-digit `otp`.
+
+---
+
+## Automatic/System Transitions
+
+All run from `cron/index.ts` and `cron/order.cron.ts`. The every-minute job
+runs the order steps in the order listed.
+
+| Schedule | Job | Transition | Condition |
+| --- | --- | --- | --- |
+| every minute | `handleOrderExpiryCron` | `DISPATCHING` → `AWAITING_PARTNER` | `dispatchExpiresAt` passed; riders that did not respond are added to the order's rejected list |
+| every minute | `handleAutoRetryDispatchCron` | escalation, then `AWAITING_PARTNER` → `DISPATCHING`, then `REASSIGNMENT_NEEDED` → `DISPATCHING` | Retry only while `estimatedReadyAt` is in the future; after it, the order is escalated (once until a rider is assigned, row 9) and stays `AWAITING_PARTNER` |
+| every minute | `handleAutoAcceptCron` | `PENDING` → `PREPARING` | `autoAcceptDeadlineAt` passed |
+| every minute | `handleAutoDispatchCron` | `PREPARING` → `DISPATCHING` | Delivery order, `estimatedReadyAt` within `autoDispatchLeadMinutes` |
+| every minute | `handleAutoReadyCron` | `ASSIGNED` → `READY_FOR_PICKUP` (delivery), `PREPARING` → `READY_FOR_PICKUP` (pickup) | `estimatedReadyAt` passed |
+| every 5 minutes | `handleAutoNoShowCron` | `READY_FOR_PICKUP` → `NO_SHOW` | Pickup order past the 15-minute grace, or past the vendor's closing time (for `RESTAURANT` vendors the current day's closing; otherwise the closing time on the scheduled pickup day) |
+
+The two timing values come from the global settings, and both `autoAcceptDeadlineAt`
+(order creation time plus `autoAcceptTimeoutMinutes`) and `estimatedReadyAt` (set
+when the order is accepted, from the preparation minutes) are consumed by these
+jobs.
+
+Post-transition work is asynchronous, on the `order-queue` worker
+(`PROCESS_ORDER_POST_UPDATE`). The job is enqueued by every delivery-partner
+status transition (`PICKED_UP`, `ON_THE_WAY`, `DELIVERED`,
+`REASSIGNMENT_NEEDED`), by vendor pickup verification, and by vendor or
+automatic `NO_SHOW`. The worker acts on the status it is given:
+
+- `DELIVERED`, `PICKED_UP_BY_CUSTOMER`, `NO_SHOW`: credits the wallets and
+  writes the transaction rows (points and referral bonuses are skipped for
+  `NO_SHOW`). Only `DELIVERED` involves a rider: the worker then updates the
+  rider's delivery statistics and frees the rider. `PICKED_UP_BY_CUSTOMER` and
+  `NO_SHOW` have no rider to free.
+- `REASSIGNMENT_NEEDED`: frees the rider that handed the order back.
+- `PICKED_UP`, `ON_THE_WAY`: no ledger or rider change (`ON_THE_WAY` only
+  triggers a push to the vendor).
+
+Notification and push behavior for these events is documented in
+[Notification Flow](../02-platform/notification-flow.md).
+
+---
+
+## Important Business Rules
+
+- **Payment gate.** An order exists only once payment is verified; vendor
+  accept/reject and customer cancel both require `isPaid`.
+- **Accept side effects (manual and automatic).** Both paths share the same
+  effects: fill `pickupAddress` from the vendor's location, set
+  `estimatedReadyAt = now + preparation minutes`, and deduct stock for
+  non-`RESTAURANT` vendors. The minutes are the vendor's supplied
+  `preparationTime` for a manual accept, and the vendor's default
+  (`preparationTimeMinutes`) for an auto-accept. The checks listed in row 2
+  (ownership, `APPROVED` profile, paid, `preparationTime`) belong to the manual
+  accept only. A stock shortfall fails the accept with
+  `INSUFFICIENT_STOCK`; the order stays `PENDING` (auto-accept then retries on
+  later ticks).
+- **Reject.** Allowed only from `PENDING`, with a reason (`rejectReason`). It
+  sets `refundStatus: PENDING`.
+- **Cancel and refund status.** A customer cancel sets `refundStatus: PENDING`
+  only when the order was `PENDING`; from any other status it is
+  `NOT_APPLICABLE`. `NO_SHOW` is `NOT_APPLICABLE`. Neither cancel nor reject
+  performs the gateway refund itself.
+- **Delivery OTP.** Generated when the rider sets `PICKED_UP` and sent to the
+  customer. `DELIVERED` requires it; a wrong code increments `attempts`, and at
+  five failed attempts further attempts are refused (`403`). No code path that
+  resets the counter was found. The OTP is validated *before* the
+  `ON_THE_WAY` status precondition is checked, so a wrong code sent while the
+  order is in the wrong status (for example `PICKED_UP`) still increments
+  `attempts`, and a correct code sent in the wrong status is rejected by the
+  status check without completing the delivery.
+- **Pickup code.** Generated when the order is created. The vendor's
+  `verify-pickup` must supply it; a wrong code is refused (`401`). There is no
+  attempt limit.
+- **`NO_SHOW`.** The vendor action is available only for pickup orders in
+  `READY_FOR_PICKUP`, and only after the grace period. Both the vendor action
+  and the automatic no-show set `refundStatus: NOT_APPLICABLE`, set
+  `cancelReason` (the vendor's `reason`, or a default text; the automatic path
+  writes a fixed text for the grace-period or closing-time trigger), and restore
+  stock for non-`RESTAURANT` vendors.
+- **Single winner.** Rider acceptance and admin assignment use conditional
+  updates plus a rider claim in the same transaction, so two actors cannot both
+  take the order.
+- **One active order per rider.** A rider with an active order cannot accept
+  another.
+- **History semantics.** Two mechanisms write `statusHistory`. The helper
+  `updateOrderStatusHistory` (`order.utils.ts`) is used by the vendor actions
+  (accept, reject, mark ready, mark no-show), the accept's `PREPARING` step, and
+  customer cancel: if the new status equals the last entry's status it updates
+  that entry (timestamp, and `note`/`updatedBy` when supplied) instead of
+  adding one; otherwise it appends. Every `findOneAndUpdate` path (dispatch,
+  retry, escalation, rider accept and last-rider reject, admin assign, rider status
+  updates, pickup verification, auto-ready, auto no-show) `$push`es a new entry
+  unconditionally and never merges.
+- **Real-time updates.** Most transition paths emit the Socket.IO
+  `ORDER_STATUS_UPDATED` event. The dispatch-expiry cron is an exception; it
+  emits `ORDER_DISPATCH_EXPIRED` to the vendor.
+- **Ratings.** An order can be rated only in `DELIVERED` or
+  `PICKED_UP_BY_CUSTOMER`.
+
+---
+
+## Statuses that are not part of the normal flow
+
+- **`ACCEPTED`.** Defined in `ORDER_STATUS`, labelled, and accepted as a source
+  status by manual broadcast and the cancellation stock logic, but no path
+  leaves an order resting in it: manual and automatic accept both write
+  `ACCEPTED` and then `PREPARING` in the same save (`applyPreparingTransition`).
+  It is visible only in `statusHistory`.
+- **`AWAITING_PARTNER`, `REASSIGNMENT_NEEDED`.** Exception states of the
+  delivery flow (no rider, or the rider dropped the order). They loop back to
+  `DISPATCHING`, or are escalated to an admin who can assign a rider from
+  `AWAITING_PARTNER`.
+- **`REJECTED`, `CANCELED`, `NO_SHOW`.** Terminal exception outcomes, as
+  opposed to the successful terminals `DELIVERED` and `PICKED_UP_BY_CUSTOMER`.
+
+---
+
+## Implementation notes and inconsistencies
+
+- The comments in `order.model.ts` and `order.interface.ts` describe
+  `autoAcceptDeadlineAt` and `estimatedReadyAt` as "foundation only — not yet
+  consumed by transition logic". This is stale: auto-accept, auto-dispatch,
+  retry, escalation, and auto-ready all read them.
+- `BLOCKED_FOR_ORDER_CANCEL` lists seven statuses — `ASSIGNED`, `PREPARING`,
+  `READY_FOR_PICKUP`, `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, and
+  `PICKED_UP_BY_CUSTOMER` — which is not a contiguous range of the flow (for
+  example `DISPATCHING` and `REASSIGNMENT_NEEDED` are absent). It is applied
+  only to vendor rejection, where it is redundant because rejection already
+  requires `PENDING`. Customer cancellation uses its own list of blocked
+  statuses (the five terminal ones).
+- The comment on `CANCELED` in `order.constant.ts` reads "canceled
+  (vendor/customer/admin)", but `cancelOrderByCustomer` is the only code that
+  sets `CANCELED`. A vendor rejection ends in `REJECTED`, and no admin path
+  cancels an order.
+- `PICKUP_AUTO_CANCEL_HOURS` (24) is defined in `order.constant.ts` but not
+  referenced anywhere, so pickup orders are not auto-canceled after a delay.
+- `verifyPickupCode` reuses the error key
+  `ORDER_MUST_BE_READY_FOR_PICKUP_BEFORE_NO_SHOW` when the order is not
+  `READY_FOR_PICKUP`.
+- The rider status endpoint accepts `PICKED_UP` only from `READY_FOR_PICKUP`,
+  so a delivery order cannot be picked up before the auto-ready cron has run
+  after `estimatedReadyAt`.
+
+---
+
+## Related documentation
+
+- [Notification Flow](../02-platform/notification-flow.md) — the push, email, and
+  realtime notifications sent for these transitions.
+- [Data Model](../02-platform/data-model.md) — the `Order` collection, its
+  status field, and its embedded snapshots.
+- [Architecture](../01-introduction/architecture.md) — the request lifecycle,
+  cron scheduler, and BullMQ workers that drive the automatic transitions.
+- [Authorization](../03-identity-access/authorization.md) — role checks and the
+  agreement gate that apply to the order routes.
