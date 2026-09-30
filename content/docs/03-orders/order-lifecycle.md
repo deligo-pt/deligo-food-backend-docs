@@ -419,7 +419,7 @@ side of settlement in
   emits `ORDER_DISPATCH_EXPIRED` to the vendor. All events are listed in
   [Order Tracking and Realtime](./order-tracking-and-realtime.md#order-events).
 - **Ratings.** An order can be rated only in `DELIVERED` or
-  `PICKED_UP_BY_CUSTOMER`.
+  `PICKED_UP_BY_CUSTOMER`; see [Ratings](../11-ratings/ratings.md).
 
 ---
 

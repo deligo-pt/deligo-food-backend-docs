@@ -80,8 +80,11 @@ Customers are **never** registered explicitly — the first `login-customer` or
 `ADMIN` and `SUB_VENDOR` accounts are created through the authenticated
 `POST /api/v1/auth/register/onboard` endpoint, not `/register`.
 
-All `/auth/*` endpoints are additionally rate-limited at 10 requests/minute/IP
-(`rateLimiter('auth')`).
+Most `/auth/*` endpoints are additionally rate-limited at 10 requests/minute/IP
+(`rateLimiter('auth')`). The endpoints without it are `update-fcm-token`,
+`submitForApproval`, `approved-rejected-user`, `request-corrections`,
+`confirm-corrections`, `soft-delete/:userId` and `permanent-delete/:userId`;
+they fall under the global limiter only.
 
 ---
 
@@ -493,7 +496,7 @@ Each rejection maps to a specific message key:
 | `passwordChangedAt` (seconds) not greater than token `iat` | `PASSWORD_RECENTLY_CHANGED` | 401 |
 | Role in the allowed list | `COMMON_ACCESS_DENIED` | 403 |
 | Admin has every required permission | `ADMIN_ACTION_PERMISSION_DENIED` | 403 |
-| Agreement signed (APPROVED gated roles, non-exempt path, non-GET or order route) | `AGREEMENT_RESIGN_REQUIRED` | 403 |
+| Agreement signed (APPROVED gated roles and branches, non-exempt path, non-GET or order route; see [the exemption mismatch](../07-agreements/agreement-gate.md#the-exemption-check-does-not-match-as-documented)) | `AGREEMENT_RESIGN_REQUIRED` | 403 |
 
 On success, `req.user` is the **profile document** (from
 `AuthUser.profileModel`), with `req.user.authUserId` set to the `AuthUser._id`.
@@ -525,7 +528,7 @@ change, without any token blocklist:
 
 | Rule | Where |
 | --- | --- |
-| Passwords hashed with bcrypt at a configurable cost (`bcrypt_salt_rounds`); the field is `select: false` and stripped from every `toJSON` / `toObject` | `passwordPlugin` |
+| Passwords hashed with bcrypt at a configurable cost (`bcrypt_salt_rounds`); the field is **not** `select: false`; it is removed only by the `toJSON` / `toObject` transform, so a raw or `.lean()` `AuthUser` document still contains the hash | `passwordPlugin` |
 | Password policy: 8–64 chars, at least one lowercase, uppercase, digit, and special character | `PasswordValidation.strongPasswordSchema` |
 | New password must differ from the old one | `changePasswordValidationSchema` |
 | Access and refresh tokens use separate secrets | `verifyJWT.ts` / `config` |
@@ -542,7 +545,7 @@ change, without any token blocklist:
 | Google email trusted only when `email_verified`; Facebook token checked against the app id | `verifySocialToken.ts` |
 | Same email may exist once per role; all lookups key on email/userId **and** role | `AuthUser` partial-unique indexes |
 | Every login attempt (success and failure, with reason) is recorded via the `auth-queue` into `LoginHistory` | `auth.service.ts` + `auth.worker.ts` |
-| `/auth/*` endpoints rate-limited to 10 req/min/IP | `rateLimiter('auth')` |
+| Most `/auth/*` endpoints rate-limited to 10 req/min/IP (not `update-fcm-token` or the `/:userId/...` and delete routes) | `rateLimiter('auth')` |
 | 5xx responses redact `password` / `token` / `otp` fields before logging | `globalErrorHandler` |
 
 ---

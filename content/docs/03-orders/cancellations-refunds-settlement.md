@@ -94,6 +94,8 @@ moves only when an admin calls:
 `POST /api/v1/payment/reduniq/refund/:orderId` (`auth('ADMIN', 'SUPER_ADMIN')`,
 no permission action, so any `ADMIN` can call it) → `refundRedUniqPayment`.
 
+The gateway side of this route is described in [Payments](../10-payments/payments.md#refunds-and-voids).
+
 ```mermaid
 flowchart TD
     A["Admin: POST /payment/reduniq/refund/:orderId"] --> B{"Order paid (isPaid and paymentStatus PAID)?"}
@@ -239,3 +241,4 @@ ledger rows; the wallet-side split above is the completion-time part. Wallet and
 - [Data Model](../02-platform/data-model.md): `Transaction`, `Wallet`, `Payout` and the platform commission.
 - [Notification Flow](../02-platform/notification-flow.md): the notifications sent for rejection and cancellation.
 - [Authorization](../03-identity-access/authorization.md): admin permissions.
+- [Payments](../10-payments/payments.md): the payment flows and the refund and void calls to the gateway.

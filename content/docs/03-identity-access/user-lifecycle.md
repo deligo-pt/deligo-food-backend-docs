@@ -239,7 +239,7 @@ not touched by this flow.
 | --- | --- |
 | `CUSTOMER` | Created on first login; auto-`APPROVED`; no submit/approval step; can be `BLOCKED` or soft-deleted by an admin, or self-soft-delete |
 | `VENDOR` | Self-registers or is onboarded; agreement must be signed before `submitForApproval` and before `APPROVED`; approval triggers agreement finalization |
-| `SUB_VENDOR` | Only created via onboarding (by its parent `VENDOR` or an admin with `parentVendorId`); inherits business fields from the parent; parent branch counts recomputed on create, soft delete, and permanent delete; **not** an agreement-gated role |
+| `SUB_VENDOR` | Only created via onboarding (by its parent `VENDOR` or an admin with `parentVendorId`); inherits business fields from the parent; parent branch counts recomputed on create, soft delete, and permanent delete; has no agreement row or submit/approve agreement pre-check of its own, but its requests are still gated through its parent's agreement (see [Authorization](./authorization.md#the-agreement-gate-as-an-authorization-constraint)) |
 | `FLEET_MANAGER` | Same agreement-gated flow as `VENDOR` |
 | `DELIVERY_PARTNER` | Self-registers or is onboarded by an admin or `FLEET_MANAGER`; a `FLEET_MANAGER` may submit-for-approval and soft-delete only partners they own (`currentFleetManagerId`); not agreement-gated |
 | `ADMIN` | Onboarded only by a `SUPER_ADMIN`; goes through `PENDING → SUBMITTED → APPROVED`; not agreement-gated |
@@ -275,8 +275,10 @@ gate in full.
 
 All emails and push notifications are dispatched fire-and-forget (failures are
 logged, not surfaced). Activity logs are written from the controller after the
-service returns. No queue/event-listener system is involved in these
-lifecycle transitions — the side effects are inline.
+service returns, except `USER_REGISTERED`, which the service writes itself (for
+`register`, and for customers created by `login-customer` or `social-login`; see
+[Activity Logs](../12-activity-logs/activity-logs.md)). No queue/event-listener
+system is involved in these lifecycle transitions — the side effects are inline.
 
 ---
 

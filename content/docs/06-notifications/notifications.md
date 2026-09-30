@@ -261,7 +261,7 @@ Despite its name, `incoming-notification` is a chat alert, not a `Notification` 
 1. **No unread counter and no retention.** Clients must filter; the collection grows forever.
 2. **Soft-deleted notifications appear in `/my-notifications`** unless `isDeleted=false` is sent; `/all` has no base filter at all.
 3. **`POST /notifications/broadcast` types:** `TBroadcastNotificationPayload.targetAudience` is typed as a single role string, but validation and the service treat it as an array of arbitrary strings.
-4. **Agreement gate exemptions do not match** (see above). `authorization.md` lists the exempt prefixes as if they work.
+4. **Agreement gate exemptions do not match** (see above and the [gate page](../07-agreements/agreement-gate.md#the-exemption-check-does-not-match-as-documented)).
 5. **Logged-out devices keep receiving pushes**, and tokens are not removed on logout.
 6. **`401` rather than `403`** when marking another user's notification as read, unlike permanent deletion (`403`).
 7. **Templates that are never sent and types that have no sender** are listed on the [triggers page](./notification-triggers.md#templates-and-types-that-exist-but-are-not-used).

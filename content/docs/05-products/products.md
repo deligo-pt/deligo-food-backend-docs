@@ -73,7 +73,7 @@ Notes:
   route.
 - `VENDOR` is subject to the agreement gate for every write (a vendor with an
   unsigned current agreement gets `AGREEMENT_RESIGN_REQUIRED` on all non-GET
-  requests). `SUB_VENDOR` and admins are not gated. See
+  requests). A `SUB_VENDOR` is gated through its parent vendor's agreement; admins are not gated. See
   [Authorization](../03-identity-access/authorization.md#the-agreement-gate-as-an-authorization-constraint).
 - Product categories have their own routes, listed in [Product categories](#product-categories).
 
@@ -568,7 +568,7 @@ transaction. Product creation and copying never set it.
 There is no stored vendor rating. A vendor's rating is derived from its products'
 ratings (review-count weighted) and attached as `vendorId.rating` to the populated
 vendor of product list and detail responses (admin and customer-style reads).
-Rules for who may rate what are outside this page.
+Rules for who may rate what are in [Ratings](../11-ratings/ratings.md).
 
 ---
 
@@ -585,7 +585,8 @@ first match) whose buy side matches it:
 
 Other offer types and scopes produce no badge. `title` is localized to the request
 language. The store discount in `pricing` is separate from offers; how offers are
-applied to a cart is covered on the checkout page.
+applied to a checkout summary is covered in [Offers](../09-offers-and-coupons/offers.md)
+and [Checkout and Order Creation](../03-orders/checkout-and-order-creation.md#offers).
 
 ---
 

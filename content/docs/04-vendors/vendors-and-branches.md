@@ -506,65 +506,58 @@ status rules are covered in detail in
 
 These are described as they are in the code; nothing has been corrected.
 
-1. **Existing docs contradict the code on branches and agreements.**
-   [Authorization](../03-identity-access/authorization.md) (branch row and the "Who
-   it affects" paragraph) and [User Lifecycle](../03-identity-access/user-lifecycle.md)
-   (the `SUB_VENDOR` row of role-specific behavior) say a `SUB_VENDOR` is not
-   agreement-gated. In `middlewares/auth.ts` a branch **is** gated, through its
-   parent's agreement. `SUB_VENDOR` is only exempt from the *submit-for-approval*
-   agreement pre-check.
-2. **No cascade from parent to branches.** Blocking, rejecting or soft-deleting
+1. **No cascade from parent to branches.** Blocking, rejecting or soft-deleting
    a `VENDOR` does not change its branches. Discovery, cart and checkout for a
    branch check the parent's agreement only, not the parent's status or deletion.
    A branch of a blocked parent can still be listed and ordered from. For a
    soft-deleted parent the auth gate is skipped for its branches.
-3. **Branch approval ignores the parent.** No agreement check applies to a
+2. **Branch approval ignores the parent.** No agreement check applies to a
    branch on submit or approval, and the parent's status is not consulted.
-4. **Single-vendor customer endpoints are unfiltered.**
+3. **Single-vendor customer endpoints are unfiltered.**
    `getSingleVendorForCustomer` (`GET /vendors/customer/:vendorId` and the
    unauthenticated `GET /vendors/nearby/open/:vendorId`) checks only
    `isDeleted: false`, and returns `email` and `contactNumber`. The list
    endpoints apply `APPROVED`, agreement and distance filters; these do not.
-5. **Cart and checkout do not check vendor approval.** The cart error key
+4. **Cart and checkout do not check vendor approval.** The cart error key
    `STORE_CLOSED_OR_UNAPPROVED` implies it, but only `isStoreOpen` and existence
    are checked. Because the store cron touches only `APPROVED` vendors, a vendor
    that leaves `APPROVED` keeps its last `isStoreOpen` value.
-6. **Vendor list pool ignores product state.** Ownership of any non-deleted
+5. **Vendor list pool ignores product state.** Ownership of any non-deleted
    product puts a vendor in the candidate pool, even when every product is
    inactive or rejected.
-7. **Update lock never clears on approval.** See
+6. **Update lock never clears on approval.** See
    [User Lifecycle](../03-identity-access/user-lifecycle.md#isupdatelocked-through-the-lifecycle):
    an approved vendor must use a correction grant (or an admin) to change its
    schedule, location or bank details. The two document routes return different
    error keys for the same condition (`VENDOR_UPDATE_LOCKED_CONTACT_SUPPORT` on
    upload, `VENDOR_PROFILE_LOCKED` on delete).
-8. **Two different location fields.** The authenticated list uses
+7. **Two different location fields.** The authenticated list uses
    `currentSessionLocation` (`$near`); the public list uses `businessLocation`
    (bounding box); manual order broadcast uses `currentSessionLocation`. They
    stay in sync only when `businessLocation` is updated through `vendorUpdate`,
    and branches do not clone either.
-9. **`totalBranches` is client-editable**, although the model comment describes
+8. **`totalBranches` is client-editable**, although the model comment describes
    it as only ever auto-raised.
-10. **Cuisine validation is skipped** unless `businessType` is in the same
+9. **Cuisine validation is skipped** unless `businessType` is in the same
     update payload.
-11. **Stale model comments.** `openingHours` / `closingHours` are documented as
+10. **Stale model comments.** `openingHours` / `closingHours` are documented as
     `"09:00 AM"` and `closingDays` as including `"Holidays"`; validation and the
     cron use 24-hour `HH:mm` and full weekday names only.
-12. **Manual store control has no duration.** It ends only in the local
+11. **Manual store control has no duration.** It ends only in the local
     `00:00`–`00:05` window, which can be in the middle of service hours for an
     overnight schedule. A closing day also closes the after-midnight part of the
     previous day's overnight hours.
-13. **Product approval is post-hoc, and the status endpoint bypasses it.**
+12. **Product approval is post-hoc, and the status endpoint bypasses it.**
     `Product.isApproved` defaults to `true`, so products are live on creation
     and copies are approved automatically. `PATCH /products/:productId/status`
     sets `isApproved = true` when a product is set to `INACTIVE`, and clears
     `isDeleted` on any status change. A vendor can undo an admin rejection or a
     soft delete this way.
-14. **Copy-to-branches oddities.** Stock quantities and image URLs are copied
+13. **Copy-to-branches oddities.** Stock quantities and image URLs are copied
     unchanged; an additional category or add-on group that cannot be mapped keeps
     the **source vendor's** id (a cross-vendor reference); and the copy is not
     transactional.
-15. **Approved-only enforcement differs by endpoint.** The product status route
+14. **Approved-only enforcement differs by endpoint.** The product status route
     requires an `APPROVED` caller, but `GET /vendors/:vendorId`, document edits
     and the profile update do not check the vendor's `status`.
 

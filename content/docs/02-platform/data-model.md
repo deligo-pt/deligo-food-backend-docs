@@ -21,7 +21,7 @@ Identity is split into two documents:
 
 | Collection | Holds | Notes |
 | --- | --- | --- |
-| `AuthUser` | Credentials and session state: `email` / `contactNumber`, `password` (hashed, `select` off), `role`, `status`, `loginDevices[]`, `socialAccounts[]`, `isEmailVerified`, `passwordChangedAt`, `twoFactorEnabled`, `isDeleted` | One per (identity, role). `userId` is the shared business key. |
+| `AuthUser` | Credentials and session state: `email` / `contactNumber`, `password` (hashed; not `select: false`, only stripped from `toJSON` / `toObject`), `role`, `status`, `loginDevices[]`, `socialAccounts[]`, `isEmailVerified`, `passwordChangedAt`, `twoFactorEnabled`, `isDeleted` | One per (identity, role). `userId` is the shared business key. |
 | Role profile | Everything domain-specific about that user | One of five collections, chosen by `profileModel`. |
 
 `AuthUser.profileId` + `AuthUser.profileModel` point at the profile document;
@@ -130,7 +130,7 @@ Notable embedded structures (`src/app/modules/Order/order.model.ts`):
 | `orderCalculation` | Subtotal, discounts, tax, service charge (+ VAT) |
 | `delivery` | Charge, VAT, distance, estimated time |
 | `payoutSummary` | The full split: `deliGoCommission` (incl. `totalPlatformGrossHolding`), `fleet`, `vendor.vendorNetPayout`, `rider.riderNetEarnings` |
-| `paymentMethod` / `paymentStatus` / `transactionId` / `isPaid` | Payment linkage (method ∈ `CARD · MB_WAY · APPLE_PAY · PAYPAL · GOOGLE_PAY · OTHER`) |
+| `paymentMethod` / `paymentStatus` / `transactionId` / `isPaid` | Payment linkage (method ∈ `CARD · MB_WAY · APPLE_PAY · PAYPAL · GOOGLE_PAY · OTHER`). There is no separate Payment collection; see [Payments](../10-payments/payments.md#where-payment-state-lives) |
 | `orderStatus` + `statusHistory[]` | State machine + audit trail |
 | `fulfillmentType` | `DELIVERY` or `PICKUP` |
 | `pickup` | Self-pickup: 6-digit `code` (`select: false`), `readyAt`, `verifiedAt` |
@@ -196,7 +196,9 @@ Money leaving the platform to a `Vendor`, `DeliveryPartner`, or `FleetManager`
 `amount`, `paymentMethod` (`BANK_TRANSFER · MOBILE_BANKING · CASH`),
 `bankDetails`, `payoutProof`, and `status` ∈ `PENDING · PROCESSING · PAID`. A
 **partial unique index** on `{ userId, status: 'PENDING' }` enforces at most one
-open payout per user. The midnight payout cron creates these automatically.
+open payout per user. The midnight payout cron creates these automatically, but
+only when `payout.autoGenerate` is enabled in the global settings and the day is
+one of `payout.payoutDays`.
 
 ```mermaid
 flowchart LR
@@ -296,7 +298,7 @@ rather than pricing the delivery at 0.
 | Collection | Written by | Purpose |
 | --- | --- | --- |
 | `LoginHistory` | `auth-queue` worker | Login / logout audit |
-| `ActivityLog` | services via `createActivityLog` | Business-event trail; pruned by the 03:00 retention cron |
+| `ActivityLog` | services via `createActivityLog` | Business-event trail; archived, then deleted, by the 03:00 retention cron. See [Activity Logs](../12-activity-logs/activity-logs.md) |
 | `ErrorLog` | `globalErrorHandler` | Every `5xx`, with sensitive fields redacted |
 | `EmailLog` | `emailSender` | Outbound email record |
 | `Notification` | notification service | In-app notification feed (paginated with QueryBuilder) |

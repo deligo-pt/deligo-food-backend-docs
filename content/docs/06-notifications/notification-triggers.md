@@ -137,7 +137,7 @@ Sources are in `modules/Payout/payout.service.ts`. Recipients are the payout own
 | Fleet manager initiates a settlement for one of their own riders (`POST /payouts/initiate-settlement`, `FLEET_MANAGER` only) | The rider | `PAYOUT_SETTLEMENT_INITIATED` | `PAYOUT` | After the transaction commits. `data`: `amount`, `status`, `paymentMethod`. |
 | Initiation blocked because bank name or IBAN is missing | The target user | `PAYOUT_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent **before** the request fails with `CANNOT_INITIATE_SETTLEMENT_INCOMPLETE_BANK_DETAILS`. |
 | Settlement finalized (`POST /payouts/finalize-settlement/:payoutId`; `ADMIN`, `SUPER_ADMIN`, `FLEET_MANAGER`) | The payout owner | `PAYOUT_SETTLEMENT_COMPLETED` | `PAYOUT` | After commit. `data`: `amount`, `status`, `paymentMethod`. |
-| Daily 00:00 automated settlement (`cron/payout.cron.ts` calling `initiateAutomatedSettlement`) skips a wallet owner with incomplete bank details | That user | `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent inside the loop **before** the surrounding transaction commits. Riders that belong to a fleet manager are skipped entirely. |
+| Daily 00:00 automated settlement (`cron/payout.cron.ts` calling `initiateAutomatedSettlement`; runs only when `payout.autoGenerate` is on and today is a payout day) skips a wallet owner with incomplete bank details | That user | `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent inside the loop **before** the surrounding transaction commits. Riders that belong to a fleet manager are skipped entirely. |
 
 The automated run creates `PENDING` payouts but sends **no** "initiated"
 notification for them; only the two failure/completion messages above exist.

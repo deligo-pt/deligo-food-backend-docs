@@ -232,13 +232,16 @@ that vendor.
 summary, then rebuilds it (`rebuildCheckoutSummary`), setting
 `orderCalculation.totalOfferDiscount` and `offer.offerApplied`. It refuses a
 summary that is already converted (`CANNOT_APPLY_OFFER_TO_COMPLETED_CHECKOUT`)
-or that belongs to another customer. Offer types and eligibility rules belong
-to the Offer module and are not documented here; the order only reserves usage
-(see [Order creation](#order-creation)).
+or that belongs to another customer. Offer types, eligibility and the discount
+calculation are covered in [Offers](../09-offers-and-coupons/offers.md); the order only
+reserves usage (see [Order creation](#order-creation)).
 
 ---
 
 ## Payment
+
+This section summarizes the two payment routes. The gateway integration, the webhook,
+verification, failure handling and refunds are in [Payments](../10-payments/payments.md).
 
 Both payment routes verify the summary belongs to the caller, is not already
 converted (`CHECKOUT_SUMMARY_ALREADY_CONVERTED`), and is not already
@@ -349,3 +352,5 @@ from being created.
 - [Notification Flow](../02-platform/notification-flow.md): the notifications created after an order is placed.
 - [Data Model](../02-platform/data-model.md): the `Order`, `Transaction` and settings collections.
 - [Authorization](../03-identity-access/authorization.md): roles and the agreement gate.
+- [Offers](../09-offers-and-coupons/offers.md): how an offer is applied to the summary and how its usage is counted.
+- [Payments](../10-payments/payments.md): the gateway flows that confirm a payment and lead to order creation.

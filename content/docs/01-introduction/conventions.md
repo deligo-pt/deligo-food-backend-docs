@@ -135,7 +135,11 @@ const data = await qb.modelQuery;    // execute
 
 Reserved query keys: `searchTerm`, `page`, `limit`, `sortBy`, `fields`.
 `filter()` deliberately drops keys already constrained on the base query and
-ignores nested-object values. `.lean()` is available for read-only paths.
+ignores nested-object values. Schema paths marked `select: false` (for example
+`Order.pickup.code`) are silently dropped from `fields`, filters and `sortBy`
+unless the caller opts in with `allowRestrictedFields` (see
+[Order Tracking and Realtime](../03-orders/order-tracking-and-realtime.md#reading-orders)).
+`.lean()` is available for read-only paths.
 Role-scoped lists set the base filter *before* handing the query to the builder
 (e.g. a vendor only ever sees its own rows).
 
@@ -163,7 +167,7 @@ check list.
 | --- | --- |
 | `auth('CUSTOMER')` | Token required; role must be `CUSTOMER`. |
 | `auth('VENDOR', 'SUB_VENDOR')` | Any of the listed roles. |
-| `auth('ADMIN', 'SUPER_ADMIN', ['MANAGE_PAYOUTS'])` | Roles **plus** every listed permission present on the admin's `permissions[]` (only enforced for `role === 'ADMIN'`). |
+| `auth('ADMIN', 'SUPER_ADMIN', ['CAN_MANAGE_AGREEMENTS'])` | Roles **plus** every listed permission present on the admin's `permissions[]` (only enforced for `role === 'ADMIN'`). |
 | no `auth` | Public route (e.g. registration, login, the RedUniq webhook). |
 
 After `auth`, `req.user` is the **role profile document** (from
@@ -175,9 +179,9 @@ After `auth`, `req.user` is the **role profile document** (from
 | --- | --- |
 | Async wrapping | Route handlers and middleware use `catchAsync` so throws reach `globalErrorHandler`. |
 | Passwords | `passwordPlugin` hashes on save when `password` is modified and strips `password` from every `toJSON` / `toObject`. Provides `isPasswordMatched`, `isJWTIssuedBeforePasswordChanged`. |
-| Soft delete | Models carry `isDeleted: boolean`; queries filter `{ isDeleted: false }`. `auth` also rejects deleted accounts. |
+| Soft delete | Many models carry `isDeleted: boolean` and their queries filter `{ isDeleted: false }`, but not all do (for example Checkout, Rating, Transaction, Wallet, Points, Agreement, Payout, Referral and Payment-Token have none), and there is no shared soft-delete plugin, so each query must add the filter itself. `auth` also rejects deleted accounts. |
 | Generated IDs | `customNanoId(n)` over `A–Z0–9`; human-readable prefixes — users `C-/V-/SV-/D-/FM-/A-/SA-`, transactions `TXN-`, plus payout / ticket / referral generators. |
 | Money math | `roundTo2` and helpers in `src/app/utils/mathProvider.ts`. |
 | Multi-document writes | `mongoose.startSession()` + `session.startTransaction()` (registration, order creation, payouts, seeding). |
-| Outbound calls | Always through a client in `src/app/lib/httpClients/` or `src/app/utils/`, wrapped in an `opossum` circuit breaker, often with `withRetry`. |
+| Outbound calls | Through a client in `src/app/lib/httpClients/` or `src/app/utils/`, usually wrapped in an `opossum` circuit breaker (Meilisearch, OpenAI and RustFS/S3 are not) and, for RedUniq, the Pasta Digital token call, email and SMS, `withRetry`. |
 | Time | Platform time is `Europe/Lisbon`; date helpers live in `dateTimeProvider.ts` / `formatDateTime.ts`. |
