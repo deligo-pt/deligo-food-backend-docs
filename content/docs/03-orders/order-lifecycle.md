@@ -18,8 +18,8 @@ relative to the backend's `src/app/` directory.
 
 - An order is created **only after payment is verified**, always as `PENDING`
   (`finalizeCheckoutIntoOrder`, reached from `POST /orders/create-order` or the
-  payment gateway notification). Nothing about checkout or payment is covered
-  here.
+  payment gateway notification). Checkout and payment are covered in
+  [Checkout and Order Creation](./checkout-and-order-creation.md).
 - The current status is `Order.orderStatus` (default `PENDING`). Every change is
   also recorded in `Order.statusHistory[]` (`status`, `timestamp`, optional
   `updatedBy` and `note`). System-triggered entries carry a `note` and no
@@ -29,16 +29,16 @@ relative to the backend's `src/app/` directory.
   service function with its own preconditions, listed below. Rider, dispatch,
   automatic, and pickup-verification transitions use a conditional
   `findOneAndUpdate` on the expected current status, so a stale or repeated
-  request does not move the order. Vendor actions (accept, reject, mark ready,
-  mark no-show, all in `updateOrderStatusByVendor`) and customer cancel instead
+  request does not move the order. Vendor actions (accept, reject, cancel, mark
+  ready, mark no-show, all in `updateOrderStatusByVendor`) and customer cancel instead
   load the order and check its status inside a transaction.
 - Who can change an order's status:
 
 | Actor | What it can do to status |
 | --- | --- |
-| Vendor / sub-vendor (owning `vendorId`) | Accept, reject, mark ready (pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
+| Vendor / sub-vendor (owning `vendorId`) | Accept, reject (while `PENDING`), cancel (after accepting, before a rider is assigned), mark ready (pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
 | Delivery partner | Accept a dispatch offer, then `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, or hand the order back (`REASSIGNMENT_NEEDED`) |
-| Customer | Cancel only |
+| Customer | Cancel only (from any non-terminal status) |
 | Admin / super admin | Manually assign a rider to an order awaiting one; no other status changes |
 | System (cron / worker) | Auto-accept, auto-dispatch and retry, dispatch expiry, escalation, auto-ready, auto no-show |
 
@@ -64,8 +64,10 @@ flowchart TD
     OW -->|"rider enters delivery OTP"| DL["DELIVERED"]
 ```
 
-The customer can also cancel from any non-terminal status (see
-[Status Transition Rules](#status-transition-rules)), which ends in `CANCELED`.
+The customer can also cancel from any non-terminal status, and the vendor can
+cancel an order it has already accepted while no rider is assigned (see
+[Status Transition Rules](#status-transition-rules)); both end in `CANCELED`.
+The diagram omits `CANCELED` to stay readable.
 
 Points that are easy to miss:
 
@@ -79,7 +81,8 @@ Points that are easy to miss:
 - **A rider can hand the order back only from `ASSIGNED`.** Once the order is
   `READY_FOR_PICKUP` or later, `REASSIGNMENT_NEEDED` is no longer allowed.
 - Dispatch mechanics (rider search, offer window, pool handling) are outside the
-  scope of this page; only their effect on status is described.
+  scope of this page; only their effect on status is described. See
+  [Delivery Dispatch and Riders](./delivery-dispatch.md).
 
 ---
 
@@ -101,7 +104,8 @@ flowchart TD
   days) is validated at checkout, and a six-digit `pickup.code` is generated
   with the order.
 - The customer can cancel from any non-terminal status, including
-  `READY_FOR_PICKUP`.
+  `READY_FOR_PICKUP`. The vendor can cancel a pickup order only while it is
+  `PREPARING` (a vendor cancellation is refused from `READY_FOR_PICKUP`).
 
 ---
 
@@ -124,7 +128,7 @@ All 15 values of `ORDER_STATUS`.
 | `ON_THE_WAY` | Rider is delivering | Delivery | No |
 | `DELIVERED` | Handed over, delivery OTP verified | Delivery | Yes |
 | `PICKED_UP_BY_CUSTOMER` | Vendor verified the pickup code | Pickup | Yes |
-| `CANCELED` | Canceled by the customer | Both | Yes |
+| `CANCELED` | Canceled by the customer, or by the vendor after accepting and before a rider is assigned | Both | Yes |
 | `NO_SHOW` | Pickup order never collected | Pickup | Yes |
 
 ---
@@ -138,9 +142,10 @@ triggers it.
 | --- | --- | --- | --- | --- |
 | 1 | *(none)* → `PENDING` | Customer confirms after verified payment, or the gateway notification | Checkout summary owned by the customer, token matches, not already converted | `finalizeCheckoutIntoOrder` |
 | 2 | `PENDING` → `PREPARING` | Vendor `ACCEPTED` (manual accept) | Vendor/sub-vendor owns the order and its profile is `APPROVED`; order is paid; current status is `PENDING`; `preparationTime` ≥ 1 (validated) | `updateOrderStatusByVendor` |
-| 2b | `PENDING` → `PREPARING` | System: auto-accept | Only `autoAcceptDeadlineAt` has passed (`autoAcceptTimeoutMinutes`, default 10) and the order is still `PENDING`. The ownership, `APPROVED`-profile, paid and `preparationTime` checks of row 2 are not applied; the vendor's default preparation time is used | `autoAcceptOrder` |
-| 3 | `PENDING` → `REJECTED` | Vendor `REJECTED` | Same ownership/approval/paid checks; current status must be `PENDING`; `reason` required | `updateOrderStatusByVendor` |
-| 4 | `PREPARING` → `DISPATCHING` | System: auto-dispatch | Delivery order, no rider, empty pool, `estimatedReadyAt` within `autoDispatchLeadMinutes` (default 15) | `autoDispatchOrder` |
+| 2b | `PENDING` → `PREPARING` | System: auto-accept | Only `autoAcceptDeadlineAt` has passed (`autoAcceptTimeoutMinutes`; runtime default 2, see [Order Automation](./order-automation.md#configuration)) and the order is still `PENDING`. The ownership, `APPROVED`-profile, paid and `preparationTime` checks of row 2 are not applied; the vendor's default preparation time is used | `autoAcceptOrder` |
+| 3 | `PENDING` → `REJECTED` | Vendor `REJECTED` | Same ownership/approval/paid checks; current status must be `PENDING` **and no rider assigned**; `reason` required; sets `refundStatus: PENDING` | `updateOrderStatusByVendor` |
+| 3b | `ACCEPTED` / `PREPARING` / `DISPATCHING` / `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `CANCELED` | Vendor `CANCELED` | Same ownership/approval/paid checks; **no rider assigned** (`CANNOT_CANCEL_ORDER_RIDER_ALREADY_ASSIGNED`, so `ASSIGNED` and later are refused); status in that list (`ORDER_CANNOT_BE_CANCELED_OR_REJECTED_AT_STAGE` otherwise, which also refuses `PENDING` and pickup `READY_FOR_PICKUP`); `reason` required (`CANCEL_REASON_REQUIRED`). Sets `cancelReason` and `refundStatus: PENDING`, clears `dispatchPartnerPool` and `dispatchRejectedPartnerPool`, and restores stock (non-`RESTAURANT` vendors) | `updateOrderStatusByVendor` |
+| 4 | `PREPARING` → `DISPATCHING` | System: auto-dispatch | Delivery order, no rider, empty pool, `estimatedReadyAt` within `autoDispatchLeadMinutes` (runtime default 10, see [Order Automation](./order-automation.md#configuration)) | `autoDispatchOrder` |
 | 4b | `ACCEPTED` / `PREPARING` / `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `DISPATCHING` | Vendor `broadcast-order` | Delivery order; vendor `APPROVED` with a session location; pool currently empty | `broadcastOrderToPartners` |
 | 5 | `AWAITING_PARTNER` → `DISPATCHING` | System: retry | `dispatchExpiresAt` passed and `estimatedReadyAt` still in the future | `autoRetryDispatchOrder` |
 | 5b | `REASSIGNMENT_NEEDED` → `DISPATCHING` | System: retry | No rider, empty pool, `estimatedReadyAt` in the future | `autoRetryReassignmentOrder` |
@@ -165,7 +170,7 @@ triggers it.
 
 Guards that apply to the vendor action endpoint as a whole: repeating the
 current status returns `ORDER_ALREADY_IN_STATUS`; only `ACCEPTED`, `REJECTED`,
-`READY_FOR_PICKUP`, and `NO_SHOW` are accepted as `type`.
+`CANCELED`, `READY_FOR_PICKUP`, and `NO_SHOW` are accepted as `type`.
 
 **Customer cancellation.** The customer must own the order, the order must be
 paid, and a `reason` is required. Cancellation is refused only from the
@@ -176,7 +181,109 @@ dispatch pool, frees an assigned rider, and (for non-`RESTAURANT` vendors,
 which are the ones whose stock is deducted) restores stock for the stages where
 it had been deducted (`ACCEPTED`, `AWAITING_PARTNER`, `DISPATCHING`,
 `REASSIGNMENT_NEEDED`, `ASSIGNED`, `PREPARING`, `READY_FOR_PICKUP`). Stock is
-not restored when canceling from `PICKED_UP` or `ON_THE_WAY`.
+not restored when canceling from `PICKED_UP` or `ON_THE_WAY`. The full
+comparison of cancel, reject, vendor cancel and no-show (refund status, stock,
+riders, notifications) is in
+[Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md).
+
+**Vendor cancellation (`CANCELED`).** A vendor that has already accepted an
+order can cancel it while no rider is assigned. Allowed from `ACCEPTED`,
+`PREPARING`, `DISPATCHING`, `AWAITING_PARTNER` and `REASSIGNMENT_NEEDED`
+(`ACCEPTED` never rests, see below); refused from `PENDING` (the vendor must
+reject instead), from any status once `deliveryPartnerId` is set, and from pickup
+`READY_FOR_PICKUP`. The `reason` is required. It records `cancelReason`, sets
+`refundStatus: PENDING`, empties both dispatch pools and restores stock for a
+non-`RESTAURANT` vendor. It goes through the generic vendor status path, so it
+writes a `statusHistory` entry (the reason as the note) and emits
+`ORDER_STATUS_UPDATED`; it does **not** notify the customer, write an activity
+log entry, or enqueue any job.
+
+### Vendor reject and cancel (`PATCH /orders/:orderId/status`)
+
+Both actions use the same vendor endpoint
+(`PATCH /api/v1/orders/:orderId/status`, `VENDOR` / `SUB_VENDOR`,
+`updateOrderStatusByVendor`). The body is validated strictly: only `type`,
+`reason` and `preparationTime` are allowed.
+
+**Reject** — the vendor refuses an order it has not accepted yet:
+
+```json
+{ "type": "REJECTED", "reason": "Kitchen is closed" }
+```
+
+**Cancel** — the vendor accepted the order but backs out before any rider is
+assigned:
+
+```json
+{ "type": "CANCELED", "reason": "Ingredient unavailable" }
+```
+
+A successful call returns `200` with the message "Order status updated to
+REJECTED successfully." (or `CANCELED`; key `ORDER_STATUS_UPDATED_SUCCESS_DYNAMIC`)
+and the updated order in `data`.
+
+`REJECTED` and `CANCELED` are different outcomes and are never merged:
+`REJECTED` means the vendor never accepted the order; `CANCELED` means the vendor
+accepted it and later canceled it. Both are terminal and both set
+`refundStatus: PENDING`, so an admin has to run the gateway refund.
+
+| | `REJECTED` | `CANCELED` (by the vendor) |
+| --- | --- | --- |
+| Allowed from | `PENDING` only | `ACCEPTED`, `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED` |
+| Requires no rider | Yes | Yes |
+| `reason` | Required; saved as `rejectReason` | Required; saved as `cancelReason` |
+| Dispatch pools | Not applicable (a `PENDING` order has none) | `dispatchPartnerPool` and `dispatchRejectedPartnerPool` both cleared |
+| Stock | Nothing to restore | Restored (non-`RESTAURANT` vendors) |
+| Customer told | Push `ORDER_REJECTED_TO_CUSTOMER` and email | Not notified |
+
+**Checks, in the order they run** (the first failure is returned; `400` unless
+stated):
+
+| Order | Check | Error key |
+| --- | --- | --- |
+| 1 | Caller is a vendor / sub-vendor (`403`) | `COMMON_UNAUTHORIZED_ACTION` |
+| 2 | Caller's profile is `APPROVED` (`403`) | `NOT_APPROVED_ACCEPT_REJECT_ORDERS` |
+| 3 | Order exists and belongs to the caller (`404`) | `NOT_FOUND_MESSAGE` |
+| 4 | Order is paid | `ONLY_PAID_ORDER_CAN_ACCEPT_REJECT` |
+| 5 | Order is not already in the requested status | `ORDER_ALREADY_IN_STATUS` |
+| 6 | **Reject:** no rider assigned | `ORDER_CANNOT_BE_CANCELED_OR_REJECTED_AT_STAGE` |
+| 7 | **Reject:** status is `PENDING` | `CANNOT_REJECT_ACCEPTED_ORDER_USE_CANCEL_INSTEAD` |
+| 8 | **Reject:** `reason` is present | `REJECT_REASON_REQUIRED` |
+| 6 | **Cancel:** no rider assigned | `CANNOT_CANCEL_ORDER_RIDER_ALREADY_ASSIGNED` |
+| 7 | **Cancel:** status is not `PENDING` | `CANNOT_CANCEL_PENDING_ORDER_USE_REJECT_INSTEAD` |
+| 7b | **Cancel:** status is in the allowed list | `ORDER_CANNOT_BE_CANCELED_OR_REJECTED_AT_STAGE` |
+| 8 | **Cancel:** `reason` is present | `CANCEL_REASON_REQUIRED` |
+
+What a `CANCELED` request returns for each current status:
+
+| Current status | Result |
+| --- | --- |
+| `PENDING` | Refused (`CANNOT_CANCEL_PENDING_ORDER_USE_REJECT_INSTEAD`, "A pending order cannot be canceled. Please reject it instead."): `PENDING → CANCELED` is not allowed, the vendor must reject |
+| `ACCEPTED`, `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED` | Allowed (`ACCEPTED` never rests, see below) |
+| `ASSIGNED` | Refused (`CANNOT_CANCEL_ORDER_RIDER_ALREADY_ASSIGNED`) |
+| Delivery `READY_FOR_PICKUP`, `PICKED_UP`, `ON_THE_WAY`, `DELIVERED` | Refused (`CANNOT_CANCEL_ORDER_RIDER_ALREADY_ASSIGNED`) |
+| Pickup `READY_FOR_PICKUP` | Refused (`ORDER_CANNOT_BE_CANCELED_OR_REJECTED_AT_STAGE`; no rider, but the status is not in the list) |
+| `PICKED_UP_BY_CUSTOMER`, `REJECTED`, `NO_SHOW` | Refused (`ORDER_CANNOT_BE_CANCELED_OR_REJECTED_AT_STAGE`) |
+| `CANCELED` | Refused (`ORDER_ALREADY_IN_STATUS`) |
+
+**After a reject or a vendor cancel nothing continues.** Every automatic job and
+action selects orders by status, so a `REJECTED` or `CANCELED` order is skipped by
+all of them:
+
+- Auto-accept only reads `PENDING`, auto-dispatch only `PREPARING`, and dispatch
+  retry, reassignment retry and escalation only `AWAITING_PARTNER` /
+  `REASSIGNMENT_NEEDED`. The vendor's `broadcast-order` refuses the order.
+- Admin assignment fails with `ORDER_NOT_AWAITING_PARTNER_FOR_ASSIGNMENT` (the
+  current status is returned in the message).
+- A rider who still has the offer cannot take it: accept fails with
+  `ORDER_ALREADY_CLAIMED_OR_EXPIRED`, and reject fails with `NOT_IN_POOL` because
+  the pool was cleared.
+- `GET /orders/:orderId/nearby-partners` is read-only and does not check the
+  order's status, so it still answers for a canceled order.
+
+**Inferred:** the action runs in a database transaction that loads and then saves
+the order. If an automatic job changes the same order at the same moment, the
+vendor may get a transient error instead of the result and can simply retry.
 
 ---
 
@@ -185,7 +292,7 @@ not restored when canceling from `PICKED_UP` or `ON_THE_WAY`.
 | Role | Endpoint | Status effect | Access checks |
 | --- | --- | --- | --- |
 | `CUSTOMER` | `PATCH /orders/:orderId/cancel` | → `CANCELED` | `auth('CUSTOMER')`; order must belong to the customer |
-| `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/status` | `ACCEPTED` (→ `PREPARING`), `REJECTED`, `READY_FOR_PICKUP`, `NO_SHOW` | `auth('VENDOR','SUB_VENDOR')`; the order's `vendorId` must be the caller's own profile; profile must be `APPROVED` |
+| `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/status` | `ACCEPTED` (→ `PREPARING`), `REJECTED`, `CANCELED`, `READY_FOR_PICKUP`, `NO_SHOW` | `auth('VENDOR','SUB_VENDOR')`; the order's `vendorId` must be the caller's own profile; profile must be `APPROVED` |
 | `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/verify-pickup` | → `PICKED_UP_BY_CUSTOMER` | `auth('VENDOR','SUB_VENDOR')`; owns the order |
 | `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/broadcast-order` | → `DISPATCHING` | `auth('VENDOR','SUB_VENDOR')`; owns the order; `APPROVED`; delivery orders only |
 | `DELIVERY_PARTNER` | `PATCH /orders/:orderId/accept-dispatch-order` | `DISPATCHING` → `ASSIGNED` (accept) or rejection | `auth('DELIVERY_PARTNER')`; `APPROVED`; must be in the live pool |
@@ -205,7 +312,7 @@ Additional notes:
   assigned to the caller, but does not check the rider profile's `APPROVED`
   status; accepting a dispatch offer does.
 - The Zod schemas (`order.validation.ts`) restrict the accepted values:
-  vendors may send only the four `type` values; riders only
+  vendors may send only the five `type` values; riders only
   `REASSIGNMENT_NEEDED`, `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, and
   `DELIVERED` requires a six-digit `otp`.
 
@@ -228,7 +335,8 @@ runs the order steps in the order listed.
 The two timing values come from the global settings, and both `autoAcceptDeadlineAt`
 (order creation time plus `autoAcceptTimeoutMinutes`) and `estimatedReadyAt` (set
 when the order is accepted, from the preparation minutes) are consumed by these
-jobs.
+jobs. Settings, defaults and per-job details are in
+[Order Automation](./order-automation.md).
 
 Post-transition work is asynchronous, on the `order-queue` worker
 (`PROCESS_ORDER_POST_UPDATE`). The job is enqueued by every delivery-partner
@@ -246,14 +354,16 @@ automatic `NO_SHOW`. The worker acts on the status it is given:
   triggers a push to the vendor).
 
 Notification and push behavior for these events is documented in
-[Notification Flow](../02-platform/notification-flow.md).
+[Notification Flow](../02-platform/notification-flow.md); the wallet and ledger
+side of settlement in
+[Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md#settlement).
 
 ---
 
 ## Important Business Rules
 
 - **Payment gate.** An order exists only once payment is verified; vendor
-  accept/reject and customer cancel both require `isPaid`.
+  accept/reject/cancel and customer cancel all require `isPaid`.
 - **Accept side effects (manual and automatic).** Both paths share the same
   effects: fill `pickupAddress` from the vendor's location, set
   `estimatedReadyAt = now + preparation minutes`, and deduct stock for
@@ -264,12 +374,15 @@ Notification and push behavior for these events is documented in
   accept only. A stock shortfall fails the accept with
   `INSUFFICIENT_STOCK`; the order stays `PENDING` (auto-accept then retries on
   later ticks).
-- **Reject.** Allowed only from `PENDING`, with a reason (`rejectReason`). It
-  sets `refundStatus: PENDING`.
+- **Reject.** Allowed only from `PENDING` and only while no rider is assigned,
+  with a reason (`rejectReason`). It sets `refundStatus: PENDING`. (The
+  rider-assigned check is redundant in practice: a `PENDING` order has no rider.)
 - **Cancel and refund status.** A customer cancel sets `refundStatus: PENDING`
   only when the order was `PENDING`; from any other status it is
-  `NOT_APPLICABLE`. `NO_SHOW` is `NOT_APPLICABLE`. Neither cancel nor reject
-  performs the gateway refund itself.
+  `NOT_APPLICABLE`. A vendor cancel and a vendor reject always set `PENDING`.
+  `NO_SHOW` is `NOT_APPLICABLE`. None of cancel, reject or vendor cancel performs
+  the gateway refund itself; an admin does (see
+  [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md#refunds)).
 - **Delivery OTP.** Generated when the rider sets `PICKED_UP` and sent to the
   customer. `DELIVERED` requires it; a wrong code increments `attempts`, and at
   five failed attempts further attempts are refused (`403`). No code path that
@@ -303,7 +416,8 @@ Notification and push behavior for these events is documented in
   unconditionally and never merges.
 - **Real-time updates.** Most transition paths emit the Socket.IO
   `ORDER_STATUS_UPDATED` event. The dispatch-expiry cron is an exception; it
-  emits `ORDER_DISPATCH_EXPIRED` to the vendor.
+  emits `ORDER_DISPATCH_EXPIRED` to the vendor. All events are listed in
+  [Order Tracking and Realtime](./order-tracking-and-realtime.md#order-events).
 - **Ratings.** An order can be rated only in `DELIVERED` or
   `PICKED_UP_BY_CUSTOMER`.
 
@@ -336,12 +450,17 @@ Notification and push behavior for these events is documented in
   `PICKED_UP_BY_CUSTOMER` — which is not a contiguous range of the flow (for
   example `DISPATCHING` and `REASSIGNMENT_NEEDED` are absent). It is applied
   only to vendor rejection, where it is redundant because rejection already
-  requires `PENDING`. Customer cancellation uses its own list of blocked
-  statuses (the five terminal ones).
+  requires `PENDING` (and, now, no rider). Customer cancellation uses its own
+  list of blocked statuses (the five terminal ones), and vendor cancellation uses
+  an allow-list (`VENDOR_CANCELABLE_STATUSES`).
 - The comment on `CANCELED` in `order.constant.ts` reads "canceled
-  (vendor/customer/admin)", but `cancelOrderByCustomer` is the only code that
-  sets `CANCELED`. A vendor rejection ends in `REJECTED`, and no admin path
-  cancels an order.
+  (vendor/customer/admin)". `CANCELED` is set by `cancelOrderByCustomer` and by
+  the vendor `CANCELED` action in `updateOrderStatusByVendor`; there is no admin
+  cancellation path, so "admin" in that comment is still inaccurate. A vendor
+  rejection ends in `REJECTED`.
+- Vendor cancellation is inconsistent with vendor rejection: both set
+  `refundStatus: PENDING` (an admin must refund), but rejection notifies the
+  customer and writes an activity log entry, and cancellation does neither.
 - `PICKUP_AUTO_CANCEL_HOURS` (24) is defined in `order.constant.ts` but not
   referenced anywhere, so pickup orders are not auto-canceled after a delay.
 - `verifyPickupCode` reuses the error key
@@ -355,6 +474,21 @@ Notification and push behavior for these events is documented in
 
 ## Related documentation
 
+- [Checkout and Order Creation](./checkout-and-order-creation.md) — how a
+  checkout summary, its money split and a verified payment become the `PENDING`
+  order.
+- [Delivery Dispatch and Riders](./delivery-dispatch.md) — rider availability,
+  offers, accept/reject, retry, escalation and admin assignment.
+- [Order Automation](./order-automation.md) — the cron jobs, settings and timing
+  fields behind the automatic transitions.
+- [Order Tracking and Realtime](./order-tracking-and-realtime.md) — order reads
+  per role, socket events and rider live location.
+- [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md)
+  — the end-state paths, stock restoration, admin refunds and the settlement
+  ledger.
+- [Vendors and Branches](../04-vendors/vendors-and-branches.md) — vendor
+  ownership, agreement rules, store schedule and the vendor–product
+  relationship.
 - [Notification Flow](../02-platform/notification-flow.md) — the push, email, and
   realtime notifications sent for these transitions.
 - [Data Model](../02-platform/data-model.md) — the `Order` collection, its
