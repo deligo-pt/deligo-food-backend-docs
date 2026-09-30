@@ -236,7 +236,7 @@ the details are on other pages:
 
 | Consumer | Uses | Where documented |
 | --- | --- | --- |
-| Cart | The product's Mongo `_id`, `variationSku` when the product has variations; stores a **snapshot** of the product `name` and `image` on the item. Reading the cart re-derives price, tax and discount from the product, and also re-writes the item `name` (not `image`) | [How other modules use a product](./products.md#how-other-modules-use-a-product) |
+| Cart | The product's Mongo `_id`, `variationSku` when the product has variations; stores a **snapshot** of the product `name` and `image` on the item. Reading the cart (`view-cart`) re-derives price, tax and discount from the product but does **not** rewrite the `name`. The `name` snapshot is rewritten only when an existing item is updated through `add-to-cart`, when an item is toggled active, or when an add-on quantity is updated; the `image` is never refreshed | [How other modules use a product](./products.md#how-other-modules-use-a-product) |
 | Checkout | Re-validates each product (exists, not deleted, approved, `ACTIVE`) and recomputes amounts from the database | [Checkout and Order Creation](../03-orders/checkout-and-order-creation.md) |
 | Orders | Copy `productId`, `name`, `image`, `variationSku` and pricing into `items[]`; **no category or section is stored on a cart item or an order item**. Stock is deducted at acceptance | [Order Lifecycle](../03-orders/order-lifecycle.md) |
 

@@ -16,7 +16,7 @@ There is one persisted, per-user notification system, `NotificationService` (`mo
 | --- | --- | --- |
 | FCM push (Firebase Admin, data-only messages) | `NotificationService` | Yes, as a `Notification` document |
 | In-app notification list (REST) | `/api/v1/notifications/*` | Reads the `Notification` collection |
-| Email (Nodemailer via `EmailHelper`) | Order emails, cart-expiry, agreement, stock alert, refund, broadcast | Only in `EmailLog` (see §4); not linked to `Notification` |
+| Email (Nodemailer via `EmailHelper`) | Order emails, cart-expiry, agreement, stock alert, refund, broadcast | Only in `EmailLog` when logged (see §4; the order receipt, refund and stock-alert emails are sent with `shouldLog: false`); not linked to `Notification` |
 | Socket.IO | Order status/OTP events, support and SOS alerts | No |
 
 Notification data lives in the MongoDB `Notification` collection. FCM tokens live on `AuthUser.loginDevices[].fcmToken`. Socket.IO is **not** used by `NotificationService` (§6).
@@ -107,7 +107,7 @@ Rooms: every socket joins its own `user_<userId>` room on connect (`lib/Socket/e
 | Trigger/Event | Recipient | Channel | Source |
 | --- | --- | --- | --- |
 | Order created after verified payment (`NEW_ORDER_POST_PROCESS` job) | Owning vendor/sub-vendor (`ORDER_NEW_TO_VENDOR`) | Push + record, channel `order_notification` | `modules/Order/order.worker.ts` `processNewOrderPostProcess` |
-| Same job | Customer | Email with invoice PDF (no push/record) | same |
+| Same job | Customer | Receipt email (no push/record): a signed invoice download link, no PDF attachment; for pickup orders it also carries the pickup code and time. Not logged in `EmailLog` (`shouldLog: false`) | `modules/Order/order.invoice.ts` `sendInvoiceEmailWithAttachment` |
 | Vendor accepts (manual or auto-accept) | Customer | Email `ACCEPTED` only (no push/record) | `order.service.ts` `applyOrderAcceptedEffects` |
 | Vendor rejects (`PENDING` only) | Customer (`ORDER_REJECTED_TO_CUSTOMER`) | Push + record; email `REJECTED` | `order.service.ts` `updateOrderStatusByVendor` |
 | Customer cancels | Vendor (`ORDER_CANCELED_BY_CUSTOMER_TO_VENDOR`) unless the order is already `PICKED_UP`/`ON_THE_WAY`; the assigned rider, if any (`ORDER_CANCELED_BY_CUSTOMER_TO_RIDER`) | Push + record | `order.service.ts` `cancelOrderByCustomer` |
@@ -132,7 +132,7 @@ Both the pickup code and the delivery OTP appear in plain text in the push body 
 
 | Source | Trigger | Recipient | Channel | Source |
 | --- | --- | --- | --- | --- |
-| Account | User submits profile for approval | All ADMIN/SUPER_ADMIN with a token (`NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, type `ACCOUNT`) | Push + record | `Auth/auth.service.ts` `submitForApproval` |
+| Account | User submits profile for approval | All ADMIN/SUPER_ADMIN with a token (`NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, type `ACCOUNT`) | Push + record. The email sent in the same function (subject "New <role> Submission for Approval", template `user-approval-submission-notification`) goes to the **submitting user's own address**, not to admins | `Auth/auth.service.ts` `submitForApproval` |
 | Account | Admin approves/rejects/blocks (`ACCOUNT_STATUS_<status>`) | The user | Push + record | `approvedOrRejectedUser` |
 | Account | Admin requests corrections | The user (`CORRECTION_REQUEST_TO_USER`) | Push + record | `requestCorrections` |
 | Account | User confirms corrections | All ADMIN/SUPER_ADMIN with a token (`CORRECTION_CONFIRMED_TO_ADMIN`) | Push + record | `confirmCorrections` |
@@ -223,3 +223,7 @@ Offers, ratings, referrals, points, customer profile changes, and delivery-partn
   `loginDevices`.
 - [Architecture](../01-introduction/architecture.md) — where Socket.IO, cron,
   and the BullMQ workers are started.
+- [Notifications](../06-notifications/notifications.md) and
+  [Notification Triggers and Templates](../06-notifications/notification-triggers.md)
+  — the same system organised by model, roles and APIs, and by trigger and
+  template.
