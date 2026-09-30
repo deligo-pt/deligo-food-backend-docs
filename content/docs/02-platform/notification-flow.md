@@ -67,7 +67,7 @@ Entry points (all in `notification.service.ts`):
 
 `content` is either `{ messageKey, variables }` (template from `notificationTemplates.ts`, localized) or a raw `{ title, body }` (used only by broadcast). A key missing from the templates yields title = key, body = `''`. `channelId` is `'order_notification'` or `'default'` and travels inside the FCM data payload. Recipient `userId` values come from the triggering code path (profile `userId` of vendor, customer, rider, or admin roles).
 
-Broadcast (`POST /notifications/broadcast`, `auth('ADMIN','SUPER_ADMIN')`, controller also writes an activity log): `communicationType` `EMAIL | PUSH | BOTH`, `targetAudience` (array of role strings, not enum-validated), optional `customUserIds`, `{name}` in the body is replaced with the profile first name. PUSH/BOTH only select users with a token; EMAIL sends `broadcast-email` when the user has an email. A `Notification` is stored for every processed user (title/body copied to both `en` and `pt`, `type` default `PROMOTIONAL`). The HTTP response returns immediately (`BROADCAST_PROCESSING_STARTED`).
+Broadcast (`POST /notifications/broadcast`, `auth('ADMIN','SUPER_ADMIN')`, controller also writes an activity log): `communicationType` `EMAIL | PUSH | BOTH`, `targetAudience` (non-empty array of role strings, not enum-validated; upper-cased before matching `AuthUser.role`), optional `customUserIds`, `{name}` in the body is replaced with the profile first name. PUSH/BOTH only select users with a token; EMAIL sends `broadcast-email` when the user has an email. A `Notification` is stored for every processed user (title/body copied to both `en` and `pt`, `type` default `PROMOTIONAL`). The HTTP response returns immediately (`BROADCAST_PROCESSING_STARTED`).
 
 Email: `EmailHelper.sendEmail` writes an `EmailLog` unless called with `shouldLog: false` (`utils/emailSender.ts`). Order emails go through `sendOrderNotificationEmail` (`modules/Order/order.emails.ts`), which localizes with the user's cached language and threads messages using `Order.emailThreadMessageId`.
 
@@ -90,7 +90,17 @@ Email: `EmailHelper.sendEmail` writes an `EmailLog` unless called with `shouldLo
 | `incoming-notification` | room `admin-notifications-room` (joined by `ADMIN`/`SUPER_ADMIN` on connect) | A non-admin sends a support chat message | `lib/Socket/events/support.events.ts` (`send-message`) |
 | `new-sos-alert` | room `SOS_ALERTS_POOL` (joined via `join-sos-monitoring` by ADMIN/SUPER_ADMIN/FLEET_MANAGER) | SOS triggered | `modules/Sos/sos.service.ts` |
 
-Order events (`ORDER_STATUS_UPDATED`, `DELIVERY_OTP_GENERATED`, etc.) are tracking events sent to `user_<userId>` rooms and are not part of the notification system.
+**Order-related realtime events.** These accompany the order transitions, are not persisted, and are separate from `NotificationService` (a push can be sent for the same transition, but the two are independent calls):
+
+| Event | Emitted to | When | Source |
+| --- | --- | --- | --- |
+| `ORDER_STATUS_UPDATED` (`{ orderId, orderStatus, order, timestamp }`) | `order_<orderId>` plus the `user_<userId>` rooms of the customer, vendor, and assigned rider that are known for the transition | After most order status changes: vendor actions, cancel, dispatch/retry/escalation, rider accept and status updates, admin assign, pickup verification, and the auto-accept, auto-ready, and auto no-show crons. **Not** emitted by the dispatch-expiry cron (`handleOrderExpiryCron`). | `lib/Socket/orderSocket.ts` `emitOrderStatusUpdate`, called from `order.service.ts` |
+| `DELIVERY_OTP_GENERATED` (`{ orderId, otp, generatedAt }`) | `user_<customer>` | Rider sets `PICKED_UP` | `order.service.ts` `updateOrderStatusByDeliveryPartner` |
+| `ORDER_ACCEPTED_BY_PARTNER` (`{ orderId, partnerName }`) | `user_<vendor>` | A rider accepts a dispatch offer, or an admin assigns a rider | `partnerAcceptsDispatchedOrder`, `assignDeliveryPartnerByAdmin` |
+| `REMOVE_ORDER_POPUP` (`{ orderId }`) | `user_<rider>` (the rider who accepted, rejected, or hit an expired offer) and `partner_pool_<poolId>` for each rider id in the offered pool | Rider accepts/rejects/finds the offer expired, and the dispatch-expiry cron | `partnerAcceptsDispatchedOrder`, `cron/order.cron.ts` |
+| `ORDER_DISPATCH_EXPIRED` (`{ orderId, message }`) | `user_<vendor>` | Dispatch window expired (cron) | `cron/order.cron.ts` `handleOrderExpiryCron` |
+
+Rooms: every socket joins its own `user_<userId>` room on connect (`lib/Socket/events/order.events.ts`). No server code joins `order_<orderId>` or `partner_pool_<id>`, so events sent only to those rooms reach nobody; `order_pool_<orderId>` can be joined (`join-order-pool`) but nothing emits to it. Rider dispatch offers themselves are delivered by push (§7), not by a socket event. Because the OTP and pickup code are also sent in push text (§7), the `DELIVERY_OTP_GENERATED` payload carries the OTP in clear as well.
 
 ## 7. Order Notifications
 
@@ -106,13 +116,15 @@ Order events (`ORDER_STATUS_UPDATED`, `DELIVERY_OTP_GENERATED`, etc.) are tracki
 | Dispatch offer (auto, retry, manual broadcast) | Each rider in the offered pool (`ORDER_NEW_DISPATCH_TO_PARTNER`) | Push + record, channel `order_notification` | `order.service.ts` `dispatchOrderToPartners` |
 | Rider accepts dispatch | Vendor (`ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`) | Push + record (plus socket `ORDER_ACCEPTED_BY_PARTNER`) | `order.service.ts` `partnerAcceptsDispatchedOrder` |
 | Dispatch escalated (no rider by `estimatedReadyAt`) | All `ADMIN`/`SUPER_ADMIN` with a token (`ORDER_DISPATCH_ESCALATED_TO_ADMIN`) | Push + record, `order_notification` | `order.service.ts` `autoEscalateDispatchOrder` |
-| Admin assigns a rider | Rider (`ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `order_notification`); vendor (`ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`) | Push + record | `order.service.ts` `assignDeliveryPartnerByAdmin` |
+| Admin assigns a rider | Rider (`ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `order_notification`); vendor (`ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`) | Push + record (plus socket `ORDER_ACCEPTED_BY_PARTNER` to the vendor) | `order.service.ts` `assignDeliveryPartnerByAdmin` |
 | Rider sets `PICKED_UP` (OTP generated) | Customer (`DELIVERY_OTP_TO_CUSTOMER`, OTP in text) | Push + record; email `DELIVERY_CODE`; socket `DELIVERY_OTP_GENERATED` | `order.service.ts` `updateOrderStatusByDeliveryPartner` |
 | Rider status `ON_THE_WAY` / `DELIVERED` (`PROCESS_ORDER_POST_UPDATE` job) | Vendor (`ORDER_STATUS_UPDATE_TO_VENDOR`) | Push + record | `order.worker.ts` `processOrderPostUpdate` |
 | `DELIVERED` or `PICKED_UP_BY_CUSTOMER` (same job) | Customer | Email `DELIVERED` (no push/record) | same |
 | Admin refund processed | Customer | Email (`refund-success`, not logged) | `modules/Payment/payment.service.ts` `sendRefundSuccessEmail` |
 
-No push was found for: rider `REASSIGNMENT_NEEDED`, `NO_SHOW`, auto-accept (vendor), or `PREPARING`/`ACCEPTED` (customer). Payment intent, payment failure, and rating have no `NotificationService` calls. The `ORDER_NEED_MORE_TIME_TO_CUSTOMER` template exists but no caller was found.
+No push was found for: rider `REASSIGNMENT_NEEDED` (neither the vendor nor an admin is told; only the retry or escalation follows), `NO_SHOW`, auto-accept (vendor), `PREPARING`/`ACCEPTED`, `ASSIGNED`, `ON_THE_WAY`, or `DELIVERED` (customer; `DELIVERED` sends only an email), or `READY_FOR_PICKUP` on a delivery order (the pickup-ready notification is for pickup orders only). In total, an order gives the customer a push only for vendor rejection, pickup-ready (with the code), the pickup reminder, and the delivery OTP. Payment intent, payment failure, and rating have no `NotificationService` calls. The `ORDER_NEED_MORE_TIME_TO_CUSTOMER` template exists but no caller was found.
+
+The order status changes that trigger these notifications are defined in [Order Lifecycle](../03-orders/order-lifecycle.md).
 
 Both the pickup code and the delivery OTP appear in plain text in the push body and therefore in the stored `Notification.message`.
 
@@ -145,7 +157,8 @@ Offers, ratings, referrals, points, customer profile changes, and delivery-partn
 - **Mark all read:** `PATCH /notifications/mark-all-as-read`: `updateMany({ receiverId: own userId }, { isRead: true })`; includes inactive and soft-deleted rows.
 - **Delete:**
   - Soft delete single/multiple/all (`DELETE /:id/soft-delete`, `/soft-delete`, `/soft-delete-all`): restricted to own `receiverId`, except `SUPER_ADMIN`, whose queries have no `receiverId` restriction (so `soft-delete-all` by a `SUPER_ADMIN` affects every user's notifications).
-  - Permanent delete single/multiple/all: `SUPER_ADMIN` only, and only rows already soft-deleted (`deleteMany({ isDeleted: true })` for "all", also global).
+  - Permanent delete single/multiple/all (`DELETE /:id/permanent-delete`, `/permanent-delete`, `/permanent-delete-all`): the routes accept all seven roles, but the service returns `403 COMMON_ACCESS_DENIED` unless the caller is `SUPER_ADMIN`. Only rows already soft-deleted are removed (`deleteMany({ isDeleted: true })` for "all", also global); otherwise a `400` (`MUST_SOFT_DELETE_BEFORE_PERMANENT` / `COMMON_MUST_SOFT_DELETE_FIRST` / `NO_SOFT_DELETED_FOUND_FOR_PERMANENT`).
+- **Route access:** every `/notifications` route except `POST /notifications/broadcast` (`ADMIN`/`SUPER_ADMIN`) accepts all seven roles (`CUSTOMER`, `VENDOR`, `SUB_VENDOR`, `DELIVERY_PARTNER`, `FLEET_MANAGER`, `ADMIN`, `SUPER_ADMIN`); ownership is enforced in the service.
 
 ## 10. Notification Retention / Cleanup
 
@@ -204,6 +217,8 @@ Offers, ratings, referrals, points, customer profile changes, and delivery-partn
   sessions, `loginDevices`, and FCM token handling.
 - [User Lifecycle](../03-identity-access/user-lifecycle.md) — the account
   submission, approval, and correction transitions that send notifications.
+- [Order Lifecycle](../03-orders/order-lifecycle.md) — the order statuses and
+  transitions that trigger the order notifications in §7.
 - [Data Model](./data-model.md) — the `AuthUser` collection and its
   `loginDevices`.
 - [Architecture](../01-introduction/architecture.md) — where Socket.IO, cron,
