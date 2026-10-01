@@ -268,7 +268,7 @@ does to the rider:
 ## Related documentation
 
 - [Order Lifecycle](./order-lifecycle.md): statuses, transitions and the roles allowed to trigger them.
-- [Delivery Exceptions and Verification](./delivery-exceptions.md): rider SOS, rider replacement, OTP lock, receipt confirmation, manual completion and fault cancel for in-transit orders.
+- [Delivery Exceptions and Verification](./delivery-exceptions.md): rider SOS and rider replacement (from `READY_FOR_PICKUP`), OTP lock, receipt confirmation and manual completion (in transit), and fault cancel.
 - [Order Automation](./order-automation.md): the cron jobs that dispatch, retry and escalate.
 - [Order Tracking and Realtime](./order-tracking-and-realtime.md): sockets, rider live location and order reads.
 - [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md): what happens to a rider and the money when an order ends.

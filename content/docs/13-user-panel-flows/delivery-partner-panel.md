@@ -103,9 +103,9 @@ flowchart TD
 | --- | --- | --- | --- |
 | `DISPATCHING` | Answer the offer | `accept-dispatch-order` | `ACCEPT` → `ASSIGNED` and the rider becomes `ON_DELIVERY`. `REJECT` removes the rider from the pool; the last rejection sends the order to `AWAITING_PARTNER` |
 | `ASSIGNED` | Wait. May hand the order back | `update-order-status` with `REASSIGNMENT_NEEDED` | The order goes back to dispatch |
-| `READY_FOR_PICKUP` | Collect the order from the vendor | `PICKED_UP` | A six-digit code is generated and sent to the customer |
-| `PICKED_UP` | Travel | `ON_THE_WAY` | The vendor is pushed |
-| `ON_THE_WAY` | Hand over and submit the customer's code | `DELIVERED` with `otp` | The order completes; settlement queued; the rider is freed |
+| `READY_FOR_PICKUP` | Collect the order from the vendor. May raise an SOS | `PICKED_UP` | A six-digit code is generated and sent to the customer |
+| `PICKED_UP` | Travel. May raise an SOS | `ON_THE_WAY` | The vendor is pushed |
+| `ON_THE_WAY` | Hand over and submit the customer's code. May raise an SOS or report a verification issue | `DELIVERED` with `otp` | The order completes; settlement queued; the rider is freed |
 
 Rules that shape the rider's role:
 

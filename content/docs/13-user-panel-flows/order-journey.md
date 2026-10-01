@@ -171,6 +171,12 @@ Points worth knowing:
   recovers it; a rider can also report a verification issue, and the customer can be
   asked to confirm receipt. See
   [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md).
+- **A rider can raise an SOS from `READY_FOR_PICKUP` onward.** It is refused at
+  `ASSIGNED` and earlier and at `DELIVERED` / `CANCELED`. An accepted SOS opens a
+  `RIDER_SOS` exception and pushes the admins, who can acknowledge it, let the rider
+  continue, replace the rider or cancel for a delivery fault; the customer is not told
+  about the SOS, and the status does not change. See
+  [SOS](../02-platform/sos.md#rider-sos-on-an-order).
 - **Tracking has no ownership check.** Any authenticated customer, vendor, branch,
   rider or admin can join an order's tracking room, and a rider can publish positions
   to any order room. See the caveats on

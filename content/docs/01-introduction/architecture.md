@@ -245,8 +245,15 @@ email and SMS also retry transient failures via `withRetry`.
   with a `dispatchPartnerPool` and a `dispatchExpiresAt`. Delivery partners
   accept via `accept-dispatch-order`; `handleOrderExpiryCron` clears expired
   dispatch windows and notifies the vendor. Search widens over distance tiers
-  (`DELIVERY_SEARCH_TIERS_METERS = [3000, 4000, 5000]`). See
-  [Delivery Dispatch](../03-orders/delivery-dispatch.md).
+  (`DELIVERY_SEARCH_TIERS_METERS = [3000, 4000, 5000]`). The retry cron
+  re-broadcasts `AWAITING_PARTNER` and `REASSIGNMENT_NEEDED` orders only while
+  `estimatedReadyAt` is in the future; after it the order is escalated once to the
+  admins, who assign a rider. If the geo search or the dispatch write fails after
+  the order was claimed into `DISPATCHING`, it is moved back to `AWAITING_PARTNER`
+  so retry and escalation take over. A vendor that confirms a delivery order ready
+  early records `foodReadyAt`, and the order becomes `READY_FOR_PICKUP` when a rider
+  is assigned; otherwise the auto-ready fallback applies 5 minutes after
+  `estimatedReadyAt`. See [Delivery Dispatch](../03-orders/delivery-dispatch.md).
 - **Self-pickup.** `PICKUP` orders generate a 6-digit `pickup.code`
   (`select: false`); the vendor verifies it at `verify-pickup`. A
   `READY_FOR_PICKUP` pickup order still uncollected 15 minutes after the later of
@@ -288,9 +295,9 @@ flowchart TD
     C -->|yes| D[ASSIGNED]
     C -->|"no, window expires"| E[AWAITING_PARTNER]
     E --> A
-    D --> F{Delivery completed?}
-    F -->|yes| G[DELIVERED]
-    F -->|no| H[REASSIGNMENT_NEEDED]
+    D --> F{"Rider hands the order back?"}
+    F -->|"no, picked up and delivered"| G[DELIVERED]
+    F -->|"yes, from ASSIGNED only"| H[REASSIGNMENT_NEEDED]
     H --> A
 ```
 
@@ -300,7 +307,8 @@ flowchart TD
 flowchart TD
     A[PREPARING] --> B{fulfillmentType}
     B -->|DELIVERY| C[ASSIGNED]
-    C --> D["PICKED_UP / ON_THE_WAY"]
+    C --> C2["READY_FOR_PICKUP (vendor or auto-ready fallback)"]
+    C2 --> D["PICKED_UP / ON_THE_WAY"]
     D --> E["DELIVERED (delivery OTP)"]
     B -->|PICKUP| F[READY_FOR_PICKUP]
     F --> G["PICKED_UP_BY_CUSTOMER (pickup code)"]
