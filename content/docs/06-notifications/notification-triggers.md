@@ -134,7 +134,7 @@ Sources are in `modules/Payout/payout.service.ts`. Recipients are the payout own
 
 | Event | Recipient | Message key | Type | Notes |
 | --- | --- | --- | --- | --- |
-| Fleet manager initiates a settlement for one of their own riders (`POST /payouts/initiate-settlement`, `FLEET_MANAGER` only) | The rider | `PAYOUT_SETTLEMENT_INITIATED` | `PAYOUT` | After the transaction commits. `data`: `amount`, `status`, `paymentMethod`. |
+| Fleet manager initiates a settlement for one of their own riders (`POST /payouts/initiate-settlement`, `FLEET_MANAGER` only) | The rider | `PAYOUT_SETTLEMENT_INITIATED` | `PAYOUT` | After the transaction commits. `data`: `amount`, `status`, `paymentMethod`. The request currently fails the `Payout` schema validation before this point, so the push is not reached (see [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#manual-request-post-payoutsinitiate-settlement)). |
 | Initiation blocked because bank name or IBAN is missing | The target user | `PAYOUT_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent **before** the request fails with `CANNOT_INITIATE_SETTLEMENT_INCOMPLETE_BANK_DETAILS`. |
 | Settlement finalized (`POST /payouts/finalize-settlement/:payoutId`; `ADMIN`, `SUPER_ADMIN`, `FLEET_MANAGER`) | The payout owner | `PAYOUT_SETTLEMENT_COMPLETED` | `PAYOUT` | After commit. `data`: `amount`, `status`, `paymentMethod`. |
 | Daily 00:00 automated settlement (`cron/payout.cron.ts` calling `initiateAutomatedSettlement`; runs only when `payout.autoGenerate` is on and today is a payout day) skips a wallet owner with incomplete bank details | That user | `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent inside the loop **before** the surrounding transaction commits. Riders that belong to a fleet manager are skipped entirely. |
@@ -183,7 +183,7 @@ that is noted.
 - **Rider `REASSIGNMENT_NEEDED`**: no push to the vendor or admins; the retry or escalation that follows is what eventually reaches an admin.
 - **`DELIVERED`**: customer gets an email only (also for `PICKED_UP_BY_CUSTOMER`); no push.
 - **Payment intent, payment failure, refund**: no push. The admin refund sends the customer an email (`refund-success`, not logged) and does not create a `Notification`.
-- **Rating, offers, referrals, points, wallet credits, profile changes, support and SOS**: no `NotificationService` call.
+- **Rating, offers, referrals, points, wallet credits, profile changes, support and SOS**: no `NotificationService` call (see [Points and Referrals](../09-offers-and-coupons/points-and-referrals.md), [Support](../02-platform/support.md) and [SOS](../02-platform/sos.md)).
 
 ---
 

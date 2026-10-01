@@ -22,10 +22,10 @@ VAT rates, fiscal e-invoicing, and payment rails are Portugal-specific.
 | Identity & access | Registration, OTP/email verification, login (password, customer OTP, Google/Facebook social), JWT sessions with per-device tracking, RBAC + admin permissions, legal-agreement e-signing gate |
 | Catalog | Vendors/branches, products with variations and add-ons, categories, ingredients, Meilisearch-backed food search |
 | Ordering | Cart, checkout summary, payment intent, order creation, vendor accept/reject/prepare, delivery-partner dispatch and tracking, self-pickup with pickup codes, delivery OTP, reorder, cancellation/refund |
-| Money | Wallets, transactions ledger, payouts to vendors/riders/fleet managers, platform commission & service charge, [offers](../09-offers-and-coupons/offers.md) (a coupon can be earned as a referral reward but [cannot be redeemed](../09-offers-and-coupons/coupons.md)), loyalty points, referrals |
-| Fulfilment support | Zones (stored configuration on vendors/branches and customer addresses; not used for dispatch matching or delivery-price calculation, which are radius- and distance-based; sponsorship targeting does use them), taxes, global settings, ratings, support tickets, SOS alerts, sponsorships |
+| Money | [Wallets, transactions ledger, payouts](../10-payments/payouts-wallets-transactions.md) to vendors/riders/fleet managers, platform commission & service charge, [offers](../09-offers-and-coupons/offers.md) (a coupon can be earned as a referral reward but [cannot be redeemed](../09-offers-and-coupons/coupons.md)), loyalty points, referrals |
+| Fulfilment support | [Zones](../02-platform/platform-settings.md#zones) (stored configuration on vendors/branches and customer addresses; not used for dispatch matching or delivery-price calculation, which are radius- and distance-based; sponsorship targeting does use them), taxes, [global settings](../02-platform/platform-settings.md), ratings, [support tickets](../02-platform/support.md), [SOS alerts](../02-platform/sos.md), [sponsorships](../02-platform/sponsorships.md) |
 | Fiscal | Order invoice sync and PDF retrieval via the Pasta Digital e-invoicing service |
-| Platform ops | Notifications (push/email/SMS), analytics, activity log, login history, error log, AI product-description generation |
+| Platform ops | Notifications (push/email/SMS), [analytics](../02-platform/analytics.md), activity log, login history, error log, AI product-description generation |
 
 ## Actors and roles
 

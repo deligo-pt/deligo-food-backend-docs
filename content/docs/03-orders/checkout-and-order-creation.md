@@ -135,8 +135,9 @@ sequenceDiagram
    `AgreementService.isVendorAgreementSigned`, so a branch is judged by its
    parent's agreement. See
    [Vendors and Branches](../04-vendors/vendors-and-branches.md#agreement-and-access-rules).
-4. **Delivery only.** The customer needs an active delivery address with
-   latitude, longitude, city and street (`DELIVERY_ADDRESS_INCOMPLETE`); the
+4. **Delivery only.** The customer needs an active delivery address (see
+   [Customer Addresses and Location](../03-identity-access/customer-addresses.md))
+   with latitude, longitude, city and street (`DELIVERY_ADDRESS_INCOMPLETE`); the
    vendor needs `businessLocation` coordinates (`VENDOR_LOCATION_NOT_FOUND`);
    the road distance comes from Google Maps and must be greater than zero
    (`DISTANCE_CALCULATION_FAILED`, 503).

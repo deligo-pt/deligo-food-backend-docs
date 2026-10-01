@@ -450,12 +450,16 @@ Only `REJECTED` and `CANCELED` orders can be refunded and they are never settled
 refund has no wallet entries to reverse; a `NO_SHOW` order is settled and cannot be refunded.
 `GET /api/v1/transactions` returns the caller's own rows (and all rows for an admin);
 `GET /api/v1/transactions/:id` (admin) looks a row up by `transactionId`, which can be a gateway id or a `TXN-RF-` id.
+Moving wallet balances out to bank accounts is described in
+[Payouts, Wallets and Transactions](./payouts-wallets-transactions.md).
 
 ---
 
 ## Ingredient purchases
 
-Vendors pay for ingredient orders through the same gateway, with a simpler flow.
+Vendors pay for ingredient orders through the same gateway, with a simpler flow. The
+catalog, pricing rules, statuses and shipping are in
+[Ingredient Purchasing](../04-vendors/ingredient-purchasing.md).
 
 - `POST /api/v1/payment/ingredient/create-payment-intent` (`VENDOR`, `SUB_VENDOR`) first deletes the vendor's own stale `PROCESSING` orders and restores their stock, then reserves stock, prices the order (bulk discounts, tax, a Lisbon or non-Lisbon delivery charge), creates an `IngredientOrder` in `paymentStatus: PROCESSING` and calls `initPayment` with `order.ref` = the ingredient order id. The payment token is saved as `transactionId`. There is **no** `notificationUrl`, so there is no webhook backup.
 - `POST /api/v1/ingredients-order/create-order` (`VENDOR`, `SUB_VENDOR`) verifies with `getResult` (`'4'`), then in one transaction sets `PAID`, `CONFIRMED`, the gateway `transactionId` and a display id, and writes an `INGREDIENT_PURCHASE` `Transaction`. Admins are then notified (`NEW_INGREDIENT_PURCHASE_TO_ADMIN`).
@@ -541,6 +545,8 @@ the request.
 ## Related documentation
 
 - [Saved Cards](./saved-cards.md): tokenization, listing and removing cards, and how a saved token is stored.
+- [Payouts, Wallets and Transactions](./payouts-wallets-transactions.md): wallets, payouts and the transaction ledger.
+- [Ingredient Purchasing](../04-vendors/ingredient-purchasing.md): the vendor ingredient purchase flow that uses the same gateway.
 - [Checkout and Order Creation](../03-orders/checkout-and-order-creation.md): the summary, the amounts, and the order transaction that follows a verified payment.
 - [Offers](../09-offers-and-coupons/offers.md): offer reservation at order creation, the most common cause of a failed creation after payment.
 - [Cancellations, Refunds and Settlement](../03-orders/cancellations-refunds-settlement.md): which orders owe a refund and how completed orders are settled.

@@ -191,14 +191,16 @@ recipients' wallets; it is read by payouts and analytics.
 ### `Payout` — settlement batches
 
 Money leaving the platform to a `Vendor`, `DeliveryPartner`, or `FleetManager`
-(`userId` / `userModel`), initiated by an `Admin` or `FleetManager`
-(`senderId` / `senderModel`). Covers a `startDate`–`endDate` window, carries
+(`userId` / `userModel`), funded by an `Admin` or `FleetManager` wallet
+(`senderId` / `senderModel`); only a fleet manager can request one through the API,
+and the automatic ones name the `SUPER_ADMIN` as sender. Covers a `startDate`–`endDate` window, carries
 `amount`, `paymentMethod` (`BANK_TRANSFER · MOBILE_BANKING · CASH`),
 `bankDetails`, `payoutProof`, and `status` ∈ `PENDING · PROCESSING · PAID`. A
 **partial unique index** on `{ userId, status: 'PENDING' }` enforces at most one
 open payout per user. The midnight payout cron creates these automatically, but
 only when `payout.autoGenerate` is enabled in the global settings and the day is
-one of `payout.payoutDays`.
+one of `payout.payoutDays`. Wallet creation, the payout steps and the ledger reads are in
+[Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md).
 
 ```mermaid
 flowchart LR
@@ -232,7 +234,9 @@ reads: `delivery` pricing (tiered per-km rate, distance threshold, VAT),
 `commission` (`fleetManagerPercent`, `serviceCharge`, `serviceChargeVatRate`),
 `ingredientsOrder` charges, order rules, and referral milestones. Changing this
 document changes pricing for all *future* orders only — existing orders keep
-their snapshot. The platform commission is **not** stored here; see below.
+their snapshot. The platform commission is **not** stored here; see below. Every
+setting, its default and what reads it are listed in
+[Platform Settings](./platform-settings.md).
 
 ### Platform commission (effective-dated)
 
@@ -285,10 +289,12 @@ to a commission decision.
 The distance charge is **marginal**: the first `delivery.distanceThresholdKm`
 (default 5) are billed at `delivery.chargePerKm`, and only the km beyond the
 threshold at `delivery.chargePerKmBeyondThreshold` (falls back to
-`chargePerKm` when unset; send `null` to clear it). There is no fixed base charge. VAT is then added on
-top of the net charge.
+`chargePerKm` when unset; send `null` to clear it). A fixed `delivery.baseCharge`
+(default 0) is added to the result whenever the distance is above zero. VAT is
+then added on top of the net charge. See
+[Platform Settings](./platform-settings.md#delivery-and-service-pricing).
 
-Example with threshold 5 km, near rate 1.00, far rate 1.50: a 7 km order costs
+Example with base charge 0, threshold 5 km, near rate 1.00, far rate 1.50: a 7 km order costs
 5 × 1.00 + 2 × 1.50 = 8.00 net. Pickup orders are always 0. If the Google
 distance lookup fails, checkout is rejected with `DISTANCE_CALCULATION_FAILED`
 rather than pricing the delivery at 0.

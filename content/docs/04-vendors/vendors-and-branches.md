@@ -356,7 +356,7 @@ branch has no agreement row of its own.
 
 | Endpoint | Auth | Location source | Search area |
 | --- | --- | --- | --- |
-| `GET /vendors/customer` | `CUSTOMER` | The customer's active delivery address, else the session GPS location; `CUSTOMER_PROFILE_NOT_FOUND_SETUP_FIRST` if no profile | `$near` on the vendor's `currentSessionLocation` within `customerNearestVendorRadiusKm` (global setting); nearest first |
+| `GET /vendors/customer` | `CUSTOMER` | The customer's active delivery address (see [Customer Addresses and Location](../03-identity-access/customer-addresses.md)), else the session GPS location; `CUSTOMER_PROFILE_NOT_FOUND_SETUP_FIRST` if no profile | `$near` on the vendor's `currentSessionLocation` within `customerNearestVendorRadiusKm` (global setting); nearest first |
 | `GET /vendors/nearby/open` | **None** | `latitude` and `longitude` query parameters (required) | A latitude/longitude **bounding box** around the point on `businessLocation` (radius ÷ 111 km per degree), so it is a square, not a circle |
 | `GET /vendors/customer/:vendorId` | `CUSTOMER` | – | – |
 | `GET /vendors/nearby/open/:vendorId` | **None** | – | – |
@@ -580,3 +580,9 @@ These are described as they are in the code; nothing has been corrected.
   and BullMQ workers start.
 - [Products and Categories](../05-products/products.md) — the product model,
   pricing, stock, categories, visibility and the full product endpoint rules.
+- [Ingredient Purchasing](./ingredient-purchasing.md) — how vendors and branches
+  buy ingredients from the platform.
+- [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md) —
+  the per-row wallets and how earnings are paid out.
+- [Customer Addresses and Location](../03-identity-access/customer-addresses.md) —
+  the address and session location that customer discovery reads.

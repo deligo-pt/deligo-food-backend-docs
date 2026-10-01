@@ -102,5 +102,6 @@ uses it, so it guards nothing today. **Inferred:** it is a placeholder for a fut
 ## Related documentation
 
 - [Offers](./offers.md): the Offer engine, which is the only discount mechanism a customer can use on a checkout.
+- [Points and Referrals](./points-and-referrals.md): the referral flow that creates these coupons, and the points system.
 - [Cancellations, Refunds and Settlement](../03-orders/cancellations-refunds-settlement.md): the settlement transaction that triggers the referral reward.
 - [Notification Triggers and Templates](../06-notifications/notification-triggers.md): referrals send no notification.

@@ -210,7 +210,7 @@ ledger rows; the wallet-side split above is the completion-time part. Wallet and
   wallet, not the parent's (see
   [Vendors and Branches](../04-vendors/vendors-and-branches.md)).
 - **Payouts** (moving wallet balance out to bank accounts) are a separate flow,
-  not covered here.
+  described in [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md).
 
 ---
 

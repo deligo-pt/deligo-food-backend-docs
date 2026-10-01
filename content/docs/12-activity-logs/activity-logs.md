@@ -179,7 +179,7 @@ Flows: [User Lifecycle](../03-identity-access/user-lifecycle.md), [Authenticatio
 | `PAYMENT_REFUNDED` | `WARNING` | `ORDER` | `ADMIN`, `SUPER_ADMIN` | `metadata.amount`, `metadata.currency: 'EUR'` (logged for a void refund too) |
 | `PAYMENT_TOKEN_CREATED` | `INFO` | `PAYMENT_TOKEN` | Customer | `metadata.last4` |
 | `PAYMENT_TOKEN_REMOVED` | `WARNING` | `PAYMENT_TOKEN` | Customer | |
-| `PAYOUT_INITIATED` | `INFO` | `PAYOUT` | `FLEET_MANAGER` (the route's only role) | `metadata.amount` |
+| `PAYOUT_INITIATED` | `INFO` | `PAYOUT` | `FLEET_MANAGER` (the route's only role) | `metadata.amount`. Written only after the service succeeds, which the current `Payout` schema prevents, so it is not reached today; see [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#manual-request-post-payoutsinitiate-settlement) |
 | `PAYOUT_FINALIZED` | `INFO` | `PAYOUT` | `ADMIN`, `SUPER_ADMIN`, `FLEET_MANAGER` | `metadata.amount` |
 
 The order log is deliberately limited to exceptions; normal transitions stay in the order's own status history. **Not logged:**

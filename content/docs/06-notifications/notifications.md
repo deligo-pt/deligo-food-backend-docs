@@ -223,7 +223,7 @@ Behavior: one cursor per audience role, each processed in a `setImmediate` callb
 | --- | --- | --- |
 | `ORDER_STATUS_UPDATED` and other order events | `user_<userId>` rooms of customer, vendor and rider | Order progress; see [Order Tracking and Realtime](../03-orders/order-tracking-and-realtime.md). |
 | `incoming-notification` | `admin-notifications-room` (joined by `ADMIN` / `SUPER_ADMIN` on connect) | A non-admin sent a support message. Payload: `ticketId`, `senderName`, `messagePreview`, `time`. |
-| `new-sos-alert` | `SOS_ALERTS_POOL` | SOS triggered (`modules/Sos/sos.service.ts`). No push or record is sent for SOS. |
+| `new-sos-alert` | `SOS_ALERTS_POOL` | SOS triggered (`modules/Sos/sos.service.ts`). No push or record is sent for SOS. See [SOS](../02-platform/sos.md). |
 
 Despite its name, `incoming-notification` is a chat alert, not a `Notification` document.
 

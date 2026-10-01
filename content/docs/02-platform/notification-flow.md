@@ -136,7 +136,7 @@ Both the pickup code and the delivery OTP appear in plain text in the push body 
 | Account | Admin approves/rejects/blocks (`ACCOUNT_STATUS_<status>`) | The user | Push + record | `approvedOrRejectedUser` |
 | Account | Admin requests corrections | The user (`CORRECTION_REQUEST_TO_USER`) | Push + record | `requestCorrections` |
 | Account | User confirms corrections | All ADMIN/SUPER_ADMIN with a token (`CORRECTION_CONFIRMED_TO_ADMIN`) | Push + record | `confirmCorrections` |
-| Payout | Settlement initiated (fleet manager route) / bank details incomplete | Target user (`PAYOUT_SETTLEMENT_INITIATED`, `PAYOUT_BANK_DETAILS_INCOMPLETE`) | Push + record (`PAYOUT` / `PAYOUT_ALERT`) | `Payout/payout.service.ts` `initiateSettlement` |
+| Payout | Settlement initiated (fleet manager route; the request currently fails schema validation, see [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#manual-request-post-payoutsinitiate-settlement)) / bank details incomplete | Target user (`PAYOUT_SETTLEMENT_INITIATED`, `PAYOUT_BANK_DETAILS_INCOMPLETE`) | Push + record (`PAYOUT` / `PAYOUT_ALERT`) | `Payout/payout.service.ts` `initiateSettlement` |
 | Payout | Settlement finalized (ADMIN/SUPER_ADMIN/FLEET_MANAGER) | Payout owner (`PAYOUT_SETTLEMENT_COMPLETED`) | Push + record | `finalizeSettlement` |
 | Payout (cron) | Daily 00:00 automated settlement (runs only when `payout.autoGenerate` is on and today is a payout day) skips a user with incomplete bank details | That user (`PAYOUT_BULK_BANK_DETAILS_INCOMPLETE`) | Push + record | `initiateAutomatedSettlement` via `cron/payout.cron.ts` |
 | Cart (cron, every 5 min) | Cart item near 12 h inactivity expiry | Customer (`CART_ITEM_EXPIRY_WARNING`, type `OTHER`; `data.cartId`, `data.itemKeys`) | Push + record; email | `cron/cart.cron.ts` |
@@ -144,7 +144,7 @@ Both the pickup code and the delivery OTP appear in plain text in the push body 
 | Inventory | Admin calls `POST /products/notify-vendor/:productId` | The vendor (`PRODUCT_LOW_STOCK` / `PRODUCT_OUT_OF_STOCK`, type `STOCK_ALERT`) | Push + record; email | `Product/product.service.ts` `notifyVendorStockAlert` |
 | Ingredients | Vendor's ingredient order confirmed | All ADMIN/SUPER_ADMIN with a token (`NEW_INGREDIENT_PURCHASE_TO_ADMIN`, type `OTHER`) | Push + record | `Ingredient-Order/ing-order.service.ts` `confirmIngredientOrder` |
 | Broadcast | Admin `POST /notifications/broadcast` | Selected roles/users | Push and/or email + record | `sendBroadcastNotification` |
-| Support / SOS | Support message, SOS trigger | Admins / SOS monitors | Socket only (§6) | — |
+| Support / SOS | Support message, SOS trigger (see [Support](./support.md) and [SOS](./sos.md)) | Admins / SOS monitors | Socket only (§6) | — |
 
 Offers, ratings, referrals, points, customer profile changes, and delivery-partner/fleet-manager profile flows have no notification calls.
 

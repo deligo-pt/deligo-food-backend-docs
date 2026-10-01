@@ -101,7 +101,8 @@ reload the account or check blocked or logged-out state. On connection each
 socket joins its personal room `user_<userId>`
 (`lib/Socket/events/order.events.ts`). See
 [Notification Flow](../02-platform/notification-flow.md#6-socketio-notification-flow)
-for the non-order events (support chat, SOS).
+for the non-order events (support chat, SOS); see also [Support](../02-platform/support.md)
+and [SOS](../02-platform/sos.md).
 
 ### Order events
 
