@@ -1,14 +1,16 @@
 ---
 title: Delivery Exceptions and Verification
-description: How an in-transit delivery order is recovered when something goes wrong after pickup - rider SOS, a locked delivery OTP, a delivery verification issue with customer receipt confirmation, rider replacement, manual completion and fault cancellation - and the rules that keep them separate.
+description: How a delivery order is recovered when something goes wrong once the food is ready or with the rider - rider SOS (from READY_FOR_PICKUP), a locked delivery OTP, a delivery verification issue with customer receipt confirmation, rider replacement, manual completion and fault cancellation - and the rules that keep them separate.
 order: 7
 ---
 
 # Delivery Exceptions and Verification
 
-This page covers what happens when a delivery order is already with the rider
-(`PICKED_UP` or `ON_THE_WAY`) and the normal hand-over cannot finish. None of
-these flows adds an order status: `orderStatus` stays as it is until an admin
+This page covers what happens when a delivery order is ready for the rider or already
+with the rider and the normal hand-over cannot finish. A **rider SOS** can be raised from
+`READY_FOR_PICKUP`, `PICKED_UP` and `ON_THE_WAY`; the OTP lock, the verification issue,
+receipt confirmation and manual completion exist only once the order is `PICKED_UP` or
+`ON_THE_WAY`. None of these flows adds an order status: `orderStatus` stays as it is until an admin
 action ends the order as `DELIVERED` or `CANCELED`. The statuses and the normal
 transitions are in [Order Lifecycle](./order-lifecycle.md); rider assignment is in
 [Delivery Dispatch and Riders](./delivery-dispatch.md).
@@ -71,18 +73,23 @@ The OTP is generated when the rider sets `PICKED_UP` and goes to the customer
 
 - Repeating the SOS is idempotent (one active alert per rider and order); a later
   report updates the same exception.
-- While the order is `PICKED_UP` or `ON_THE_WAY` it opens a `RIDER_SOS` exception.
-  Before pickup the alert is recorded and admins are alerted, but the order is not
-  held.
+- It is allowed only while the order is `READY_FOR_PICKUP`, `PICKED_UP` or
+  `ON_THE_WAY`. Any earlier status (including `ASSIGNED`) and `DELIVERED` or
+  `CANCELED` are refused with `400 RIDER_SOS_NOT_ALLOWED_AT_ORDER_STATUS`, and
+  nothing is created. A rider who cannot do an `ASSIGNED` order uses
+  `REASSIGNMENT_NEEDED`, which is unchanged and available only from `ASSIGNED`.
+- Every accepted SOS creates the `Sos` alert, opens a `RIDER_SOS` exception, alerts
+  admins and leaves `orderStatus` unchanged. The rider can keep delivering; it is a
+  flag for admins, not a lock.
 - Admins see the exception in `GET /orders/delivery-exceptions` and can
   acknowledge or resolve it.
 
 | Admin action | Route | Rules |
 | --- | --- | --- |
-| List | `GET /orders/delivery-exceptions` | Open exceptions on in-transit orders, and orders with an active verification record |
+| List | `GET /orders/delivery-exceptions` | Open exceptions on `READY_FOR_PICKUP`, `PICKED_UP` and `ON_THE_WAY` orders, and orders with an active verification record |
 | Acknowledge | `PATCH /orders/:orderId/delivery-exception/acknowledge` | Marks the open exception `ACKNOWLEDGED` |
 | Resolve | `PATCH /orders/:orderId/delivery-exception/resolve` | Body `resolution` (`RIDER_CONTINUES` or `FALSE_ALARM`) and `note`; the rider carries on |
-| Replace the rider | `PATCH /orders/:orderId/replace-partner` | Only while a `RIDER_SOS` is open. Body `deliveryPartnerId` and `note`. The old rider is set `OFFLINE` and added to the rejected pool, the new rider takes the order, a **new** delivery OTP is generated and any verification report is voided |
+| Replace the rider | `PATCH /orders/:orderId/replace-partner` | Only while a `RIDER_SOS` is open (`READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY`). Body `deliveryPartnerId` and `note`. The old rider is set `OFFLINE` and added to the rejected pool, the new rider takes the order and any verification report is voided. In transit a **new** delivery OTP is generated for the customer; at `READY_FOR_PICKUP` no code exists yet, so none is created and the new rider is sent to the vendor like an admin assignment |
 | Cancel after a fault | `PATCH /orders/:orderId/fault-cancel` | See [Fault cancellation](#fault-cancellation) |
 
 Replacement is the SOS recovery. If the rider cannot continue and no replacement
@@ -169,14 +176,16 @@ with the previous answer and whether it was a correction).
 `PATCH /orders/:orderId/fault-cancel`, body `reason` (10-500 characters). It needs
 proof that the delivery failed, checked in the atomic claim:
 
-- an open `RIDER_SOS` (the rider cannot continue and no replacement is available), or
+- an open `RIDER_SOS`, at `READY_FOR_PICKUP` or in transit (the rider cannot continue and
+  no replacement is available), or
 - the customer explicitly answered **NO** to the receipt confirmation.
 
 A locked OTP alone, an unanswered confirmation request, a verification report on
 its own, or an admin's word alone are all refused. On success the order becomes
 `CANCELED` with `refundStatus: PENDING`, any open exception is closed in the same
 transaction, and the rider is released and set `OFFLINE`. Stock is not restored,
-and no vendor, fleet or platform settlement runs. The customer is told they will be
+and no vendor, fleet or platform settlement runs, including when the order was
+`READY_FOR_PICKUP` and the vendor had already prepared the food. The customer is told they will be
 fully refunded; the **refund itself uses the existing admin refund route**
 (`POST /payment/reduniq/refund/:orderId`, see
 [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md#refunds)).
@@ -192,7 +201,11 @@ The activity log records the basis (`RIDER_SOS`, `CUSTOMER_DECLINED_RECEIPT`, or
 | Verification reported, no answer | Yes | No | No | No |
 | Customer YES | Not needed | No | Yes | No |
 | Customer NO | No | No (unless an SOS is open) | No, until corrected to YES | Yes |
-| `RIDER_SOS` open | Yes (does not close the SOS) | Yes | Only with customer YES | Yes |
+| `RIDER_SOS` open | Yes in transit (does not close the SOS) | Yes | Only with customer YES | Yes |
+
+An open `RIDER_SOS` at `READY_FOR_PICKUP` allows acknowledge, resolve, replace and fault
+cancel only. OTP reset, receipt confirmation and manual completion need the order to be
+`PICKED_UP` or `ON_THE_WAY`.
 
 ---
 
@@ -206,7 +219,7 @@ The activity log records the basis (`RIDER_SOS`, `CUSTOMER_DECLINED_RECEIPT`, or
 | Admin requests receipt confirmation | Customer; socket `DELIVERY_RECEIPT_CONFIRMATION_REQUESTED` | `DELIVERY_RECEIPT_CONFIRMATION_TO_CUSTOMER` |
 | Customer answers (or corrects) | `ADMIN` / `SUPER_ADMIN` | `DELIVERY_RECEIPT_ANSWER_TO_ADMIN` |
 | OTP reset | Customer (new code); the rider | `DELIVERY_OTP_TO_CUSTOMER`, `DELIVERY_OTP_RESET_TO_PARTNER` |
-| Rider replaced | Customer (new code); the new rider; the old rider | `DELIVERY_PARTNER_CHANGED_TO_CUSTOMER`, `ORDER_HANDOVER_ASSIGNED_TO_PARTNER`, `ORDER_HANDED_OVER_FROM_PARTNER` |
+| Rider replaced | In transit: customer (new code); the new rider; the old rider. At `READY_FOR_PICKUP`: no customer push and no code; the new rider gets `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`; the old rider is told | `DELIVERY_PARTNER_CHANGED_TO_CUSTOMER`, `ORDER_HANDOVER_ASSIGNED_TO_PARTNER` (in transit) or `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER` (before pickup), `ORDER_HANDED_OVER_FROM_PARTNER` |
 | Exception acknowledged or resolved | The rider | `DELIVERY_EXCEPTION_ACKNOWLEDGED_TO_PARTNER`, `DELIVERY_EXCEPTION_RESOLVED_TO_PARTNER` |
 | Manual completion by an `ADMIN` | Every `SUPER_ADMIN` | `DELIVERY_MANUALLY_COMPLETED_TO_SUPER_ADMIN` |
 | Fault cancel | Customer; the rider | `ORDER_FAULT_CANCELED_TO_CUSTOMER`, `ORDER_CANCELED_BY_ADMIN_TO_PARTNER` |

@@ -230,7 +230,7 @@ does to the rider:
 | Event | Effect on the rider |
 | --- | --- |
 | Accept / admin assign | `currentOrderId` set, `currentStatus = ON_DELIVERY`; accept also increments `totalAcceptedOrders` |
-| SOS, replacement or fault cancel (in-transit orders) | See [Delivery Exceptions and Verification](./delivery-exceptions.md): a replaced or fault-canceled rider is set `OFFLINE` and released from the order |
+| SOS, replacement or fault cancel (`READY_FOR_PICKUP` and in-transit orders; an SOS is refused at `ASSIGNED` and earlier) | See [Delivery Exceptions and Verification](./delivery-exceptions.md): a replaced or fault-canceled rider is set `OFFLINE` and released from the order |
 | Hand back (`REASSIGNMENT_NEEDED`) | Order's `deliveryPartnerId` cleared, rider added to `dispatchRejectedPartnerPool`, `deliveryPartnerCancelReason` saved. The worker then sets the rider `IDLE`, clears `currentOrderId` and increments `canceledDeliveries` and `totalRejectedOrders` |
 | `DELIVERED` | The worker sets `IDLE`, clears `currentOrderId`, increments `totalDeliveries`, `completedDeliveries` and `totalDeliveryMinutes` (from the `PICKED_UP` history entry to now, at least 1) |
 | Customer cancels an assigned order | `currentOrderId` cleared, `IDLE`, `canceledDeliveries` incremented, in the cancellation transaction |

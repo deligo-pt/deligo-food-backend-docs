@@ -37,9 +37,9 @@ relative to the backend's `src/app/` directory.
 | Actor | What it can do to status |
 | --- | --- |
 | Vendor / sub-vendor (owning `vendorId`) | Accept, reject (while `PENDING`), cancel (after accepting, before a rider is assigned), mark ready (pickup, and delivery before pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
-| Delivery partner | Accept a dispatch offer, then `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, or hand the order back (`REASSIGNMENT_NEEDED`) |
+| Delivery partner | Accept a dispatch offer, then `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, or hand the order back (`REASSIGNMENT_NEEDED`, only from `ASSIGNED`). From `READY_FOR_PICKUP` it can raise an SOS (no status change) |
 | Customer | Cancel (from any non-terminal status). Answering a receipt confirmation never changes the status (see [Delivery Exceptions and Verification](./delivery-exceptions.md)) |
-| Admin / super admin | Manually assign a rider to an order awaiting one; for an in-transit order, complete the delivery manually (`DELIVERED`) or cancel it after a delivery fault (`CANCELED`), both with proof and a reason (see [Delivery Exceptions and Verification](./delivery-exceptions.md)) |
+| Admin / super admin | Manually assign a rider to an order awaiting one; for an order with an open rider SOS (`READY_FOR_PICKUP` or later), replace the rider or cancel it after a delivery fault (`CANCELED`); for an in-transit order, complete the delivery manually (`DELIVERED`) or cancel it after a delivery fault (`CANCELED`), both with proof and a reason (see [Delivery Exceptions and Verification](./delivery-exceptions.md)) |
 | System (cron / worker) | Auto-accept, auto-dispatch and retry, dispatch expiry, dispatch failure recovery, escalation, auto-ready fallback, auto no-show |
 
 ---
@@ -185,7 +185,7 @@ triggers it.
 | 13 | `PICKED_UP` → `ON_THE_WAY` | Delivery partner | Assigned rider | `updateOrderStatusByDeliveryPartner` |
 | 14 | `ON_THE_WAY` → `DELIVERED` | Delivery partner | Assigned rider; correct six-digit OTP. A wrong code is refused (`401`) and counted; the fifth wrong code locks the OTP (`403`, a `DELIVERY_OTP_LOCKED` exception opens) until an admin resets it (see "Delivery OTP" below) | `updateOrderStatusByDeliveryPartner` |
 | 14b | `PICKED_UP` / `ON_THE_WAY` → `DELIVERED` | Admin manual completion | Proof (customer confirmed receipt, or a verified delivery OTP with an open exception) and a reason; one settlement job. See [Delivery Exceptions and Verification](./delivery-exceptions.md) | `completeDeliveryManually` |
-| 14c | `PICKED_UP` / `ON_THE_WAY` → `CANCELED` | Admin fault cancel | An open rider SOS, or the customer declined receipt; `refundStatus: PENDING`. See [Delivery Exceptions and Verification](./delivery-exceptions.md) | `faultCancelOrder` |
+| 14c | `READY_FOR_PICKUP` / `PICKED_UP` / `ON_THE_WAY` → `CANCELED` | Admin fault cancel | An open rider SOS (at `READY_FOR_PICKUP` or in transit), or the customer declined receipt (in transit); `refundStatus: PENDING`. See [Delivery Exceptions and Verification](./delivery-exceptions.md) | `faultCancelOrder` |
 | 15 | `READY_FOR_PICKUP` → `PICKED_UP_BY_CUSTOMER` | Vendor verifies the pickup code | Pickup order owned by the vendor, status `READY_FOR_PICKUP`, code matches | `verifyPickupCode` |
 | 16 | `READY_FOR_PICKUP` → `NO_SHOW` | Vendor `NO_SHOW` | Pickup order; current status `READY_FOR_PICKUP`; at least 15 minutes past the later of the promised pickup time and the ready time | `updateOrderStatusByVendor` |
 | 16b | `READY_FOR_PICKUP` → `NO_SHOW` | System | Same grace has elapsed, or the vendor's closing time has passed | `autoMarkOrderNoShow` |
@@ -321,7 +321,7 @@ vendor may get a transient error instead of the result and can simply retry.
 | `DELIVERY_PARTNER` | `PATCH /orders/:orderId/accept-dispatch-order` | `DISPATCHING` → `ASSIGNED` (accept) or rejection | `auth('DELIVERY_PARTNER')`; `APPROVED`; must be in the live pool |
 | `DELIVERY_PARTNER` | `PATCH /orders/:orderId/update-order-status` | `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, `REASSIGNMENT_NEEDED` | `auth('DELIVERY_PARTNER')`; `deliveryPartnerId` must be the caller |
 | `ADMIN`, `SUPER_ADMIN` | `PATCH /orders/:orderId/assign-partner` | `AWAITING_PARTNER` → `ASSIGNED` (or `READY_FOR_PICKUP` when `foodReadyAt` is set) | `auth('ADMIN','SUPER_ADMIN',['CAN_MANAGE_ORDERS'])`; the permission is enforced only for `ADMIN` |
-| `DELIVERY_PARTNER` | `POST /orders/:orderId/sos`, `POST /orders/:orderId/delivery-verification-issue` | None (recorded on the order) | `auth('DELIVERY_PARTNER')`; the order's own rider. See [Delivery Exceptions and Verification](./delivery-exceptions.md) |
+| `DELIVERY_PARTNER` | `POST /orders/:orderId/sos`, `POST /orders/:orderId/delivery-verification-issue` | None (recorded on the order) | `auth('DELIVERY_PARTNER')`; the order's own rider. The SOS is allowed only at `READY_FOR_PICKUP`, `PICKED_UP` and `ON_THE_WAY`; the verification issue only in transit. See [Delivery Exceptions and Verification](./delivery-exceptions.md) |
 | `CUSTOMER` | `PATCH /orders/:orderId/confirm-receipt` | None | `auth('CUSTOMER')`; own order, `PICKED_UP` / `ON_THE_WAY` only |
 | `ADMIN`, `SUPER_ADMIN` | `GET /orders/delivery-exceptions`, `.../delivery-exception/acknowledge`, `.../delivery-exception/resolve`, `.../delivery-otp/reset`, `.../replace-partner`, `.../request-receipt-confirmation`, `.../complete-delivery`, `.../fault-cancel` | `complete-delivery` → `DELIVERED`, `fault-cancel` → `CANCELED`; the others none | Same `auth` as `assign-partner`. See [Delivery Exceptions and Verification](./delivery-exceptions.md) |
 | `FLEET_MANAGER` | none | Read-only: sees the orders of its managed riders in the order list | — |

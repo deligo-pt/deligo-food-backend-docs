@@ -172,11 +172,12 @@ An admin's power over a single order is **narrow**.
 | Assign a rider | `PATCH /orders/:orderId/assign-partner` | `CAN_MANAGE_ORDERS`. Only a delivery order in `AWAITING_PARTNER` without a rider; the rider must be approved, idle and free; the rider and vendor are pushed | Same page |
 | Be alerted | Push `ORDER_DISPATCH_ESCALATED_TO_ADMIN` | Once per order, after `estimatedReadyAt` passes with no rider | [Order Automation](../03-orders/order-automation.md#auto-dispatch-retry-and-escalation) |
 
-For an order that is already in transit (`PICKED_UP` / `ON_THE_WAY`), an admin can also
-work the delivery exceptions: acknowledge or resolve a rider SOS, reset a locked delivery
-OTP, replace the rider after an SOS, ask the customer to confirm receipt, complete the
-delivery manually (with the customer's confirmation or a verified OTP) and cancel it as
-a delivery fault (an open SOS or the customer's NO). Same `CAN_MANAGE_ORDERS` rule. These
+For an order that is `READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY` with an open rider SOS, an admin can
+acknowledge or resolve the SOS, replace the rider, or cancel the order as a delivery fault.
+Once the order is in transit (`PICKED_UP` / `ON_THE_WAY`) an admin can also reset a locked
+delivery OTP, ask the customer to confirm receipt, and complete the delivery manually (with
+the customer's confirmation or a verified OTP); the customer's NO is a second basis for a
+fault cancellation. Same `CAN_MANAGE_ORDERS` rule. These
 are described in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md).
 
 What an admin **cannot** do to an order: reject it, change its status freely, mark it
@@ -372,7 +373,7 @@ enforced. See [Analytics](../02-platform/analytics.md#mismatches-and-inconsisten
 | Area | Asymmetry | Owning page |
 | --- | --- | --- |
 | Permissions | Five enforced, nine not. A permission is needed to read the ingredient catalog but not to refund, finalize a payout, approve an account or change platform settings | [Authorization](../03-identity-access/authorization.md#admin-permissions) |
-| Order powers | An admin can assign a rider and, for an in-transit order, work the delivery exceptions (replace the rider after an open SOS, complete manually with proof, fault-cancel with proof). There is still no general cancel, reject or status change | Section 8, [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
+| Order powers | An admin can assign a rider and work the delivery exceptions (replace the rider after an open SOS or fault-cancel from `READY_FOR_PICKUP`; complete manually with proof in transit). There is still no general cancel, reject or status change | Section 8, [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
 | Refund and payout | Both run with no permission code, and neither has a list of what is waiting | Sections 9 and 10 |
 | Payout creation | No admin route creates a payout | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#payout-lifecycle) |
 | Wallet | `GET /wallets/me` returns a hard-coded id for admins | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#reading-wallets) |
