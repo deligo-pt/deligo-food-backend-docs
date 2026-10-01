@@ -134,11 +134,12 @@ Notable embedded structures (`src/app/modules/Order/order.model.ts`):
 | `orderStatus` + `statusHistory[]` | State machine + audit trail |
 | `fulfillmentType` | `DELIVERY` or `PICKUP` |
 | `pickup` | Self-pickup: 6-digit `code` (`select: false`), `readyAt`, `verifiedAt` |
-| `deliveryOtp` | Delivery handoff OTP (`code` is `select: false`), `attempts`, `lockedAt` (set when the fifth wrong code locks it), `generation` / `resetCount` (bumped by an admin reset or rider replacement) |
+| `deliveryOtp` | Delivery handoff OTP (`code` is `select: false`), `attempts`, `lockedAt` (set when the fifth wrong code locks it), `generation` / `resetCount` (bumped by an admin reset or by a rider replacement of an in-transit order; a replacement at `READY_FOR_PICKUP` leaves it alone because no code exists yet) |
 | `estimatedReadyAt` / `foodReadyAt` | `estimatedReadyAt`: expected readiness, set at acceptance. `foodReadyAt`: when the vendor confirmed a delivery order ready (empty if never confirmed). See [Order Automation](../03-orders/order-automation.md#order-timing-fields) |
 | `deliveryException` | Admin-only (`select: false`) embedded record of a rider SOS or a delivery OTP lock: `type`, `status` (`OPEN` / `ACKNOWLEDGED` / `RESOLVED`), resolution and audit fields. Does not change `orderStatus`. See [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
 | `deliveryVerification` | Admin-only (`select: false`) embedded record of a rider-reported verification issue and the customer's receipt confirmation: `status` (`REPORTED` / `CONFIRMATION_REQUESTED` / `CONFIRMED` / `DECLINED`), `productHandedOver`, request and response timestamps. Does not change `orderStatus` |
 | `dispatchPartnerPool[]` / `dispatchExpiresAt` | Rider broadcast state while `DISPATCHING` |
+| `dispatchRejectedPartnerPool[]` / `dispatchEscalatedAt` | Riders never to be offered this order again (rejected, expired, handed back, or replaced after an SOS), and the once-only latch set when automatic dispatch is escalated to the admins |
 | `invoiceSync` | Pasta Digital e-invoice result (`invoiceNo`, `atcud`, `signature`, `isSynced`) |
 | `refundStatus` | `NOT_APPLICABLE · PENDING · REFUNDED · FAILED` |
 

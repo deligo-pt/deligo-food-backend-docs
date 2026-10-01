@@ -113,7 +113,7 @@ flowchart TD
 | **Payment** | A RedUniq payment intent is created against the summary; the gateway result is confirmed by the client's `create-order` call, by the notification webhook, or (saved card) in the same request. See [Payments](../10-payments/payments.md). |
 | **Order creation** | The `Order` and its payout math are written once, by whichever confirmation path verifies the payment first (`POST /orders/create-order`, the webhook, or `pay-with-saved-token`), then `NEW_ORDER_POST_PROCESS` is enqueued. |
 | **Dispatch** | Vendor accepts and prepares. For delivery, the auto-dispatch cron (or a vendor `broadcast-order`) moves the order to `DISPATCHING` for a rider pool; for pickup it becomes `READY_FOR_PICKUP`. |
-| **Delivery or pickup** | Rider: picked up → on the way → delivered (delivery OTP). Pickup: the customer collects with the pickup code. |
+| **Delivery or pickup** | Rider: ready for pickup → picked up → on the way → delivered (delivery OTP); a rider SOS, a locked OTP or a delivery verification issue is handled by admins as a delivery exception (see [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md)). Pickup: the customer collects with the pickup code. |
 | **Completion and invoice** | `Transaction` ledger rows and a `Wallet` credit, later batched into a `Payout`; the fiscal invoice syncs through Pasta Digital. |
 
 The **[Architecture](./architecture.md)** page expands each phase and diagrams

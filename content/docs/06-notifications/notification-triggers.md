@@ -19,10 +19,12 @@ transition rules themselves live in [Order Lifecycle](../03-orders/order-lifecyc
 and [Delivery and Dispatch](../03-orders/delivery-dispatch.md); this page records
 only which transition notifies whom.
 
-**Findings in one paragraph.** There are 26 call sites. Of the 28 message
-templates, 27 are sent and one (`ORDER_NEED_MORE_TIME_TO_CUSTOMER`) has no caller.
-A customer gets a push for only four order events (vendor rejection, pickup-ready
-with code, pickup reminder, delivery OTP); most customer order updates are
+**Findings in one paragraph.** Of the 44 message
+templates, 43 are sent and one (`ORDER_NEED_MORE_TIME_TO_CUSTOMER`) has no caller.
+A customer gets a push for only a few order events (vendor rejection, pickup-ready
+with code, pickup reminder, delivery OTP, and the delivery-exception messages: the
+receipt confirmation request, a new code after a rider replacement, a fault
+cancellation); most customer order updates are
 email-only or realtime-only. No order notification targets a fleet manager. Nothing
 sends SMS or WhatsApp notifications.
 
@@ -100,14 +102,17 @@ not notified about its branches' orders, matching the order-visibility rule in
 
 ### Rider notifications (summary)
 
-A rider receives dispatch offers, admin assignments and (when assigned) a customer
-cancellation, plus account, correction, payout and broadcast messages. A rider
+A rider receives dispatch offers, admin assignments, the auto-ready fallback push and
+(when assigned) a customer cancellation, plus the delivery-exception messages
+(acknowledged, resolved, OTP reset, handover, replaced, canceled by an admin), plus account, correction, payout and broadcast messages. A rider
 **does not** receive a push for `REASSIGNMENT_NEEDED` or for a dispatch offer being
 withdrawn; the realtime `REMOVE_ORDER_POPUP` socket event handles the popup.
 
 ### Admin and fleet manager notifications (summary)
 
-Admins and super admins receive dispatch escalation, approval submissions,
+Admins and super admins receive dispatch escalation, the auto-ready fallback alert, the
+delivery-exception alerts (rider SOS, OTP lock, verification issue, customer receipt
+answer; `SUPER_ADMIN` alone also gets a manual completion by an `ADMIN`), approval submissions,
 correction confirmations and ingredient purchases through `sendToRole` (delivery
 ignores permission codes). **Fleet managers receive no order notification.** They
 receive account, correction, payout and agreement messages and broadcasts.
@@ -165,11 +170,11 @@ Wallet and payout rules are outside this page.
 
 | Role | Push + record notifications |
 | --- | --- |
-| `CUSTOMER` | `ORDER_REJECTED_TO_CUSTOMER`, `ORDER_PICKUP_CODE_TO_CUSTOMER`, `ORDER_PICKUP_TIME_REMINDER_TO_CUSTOMER`, `DELIVERY_OTP_TO_CUSTOMER`, `CART_ITEM_EXPIRY_WARNING`, `ACCOUNT_STATUS_*` (if an admin changes their status), broadcasts |
+| `CUSTOMER` | `ORDER_REJECTED_TO_CUSTOMER`, `ORDER_PICKUP_CODE_TO_CUSTOMER`, `ORDER_PICKUP_TIME_REMINDER_TO_CUSTOMER`, `DELIVERY_OTP_TO_CUSTOMER`, `DELIVERY_RECEIPT_CONFIRMATION_TO_CUSTOMER`, `DELIVERY_PARTNER_CHANGED_TO_CUSTOMER`, `ORDER_FAULT_CANCELED_TO_CUSTOMER`, `CART_ITEM_EXPIRY_WARNING`, `ACCOUNT_STATUS_*` (if an admin changes their status), broadcasts |
 | `VENDOR`, `SUB_VENDOR` | `ORDER_NEW_TO_VENDOR`, `ORDER_CANCELED_BY_CUSTOMER_TO_VENDOR`, `ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`, `ORDER_STATUS_UPDATE_TO_VENDOR`, `PRODUCT_LOW_STOCK` / `PRODUCT_OUT_OF_STOCK`, `ACCOUNT_STATUS_*`, `CORRECTION_REQUEST_TO_USER`, `PAYOUT_SETTLEMENT_COMPLETED`, `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE`, `AGREEMENT_VERSION_PUBLISHED` (parent vendor), broadcasts |
-| `DELIVERY_PARTNER` | `ORDER_NEW_DISPATCH_TO_PARTNER`, `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `ORDER_CANCELED_BY_CUSTOMER_TO_RIDER`, `ACCOUNT_STATUS_*`, `CORRECTION_REQUEST_TO_USER`, all four `PAYOUT_*` messages (riders under a fleet manager are skipped by the automated run), broadcasts |
+| `DELIVERY_PARTNER` | `ORDER_NEW_DISPATCH_TO_PARTNER`, `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `ORDER_CANCELED_BY_CUSTOMER_TO_RIDER`, `ORDER_AUTO_READY_TO_PARTNER`, `DELIVERY_EXCEPTION_ACKNOWLEDGED_TO_PARTNER`, `DELIVERY_EXCEPTION_RESOLVED_TO_PARTNER`, `DELIVERY_OTP_RESET_TO_PARTNER`, `ORDER_HANDOVER_ASSIGNED_TO_PARTNER`, `ORDER_HANDED_OVER_FROM_PARTNER`, `ORDER_CANCELED_BY_ADMIN_TO_PARTNER`, `ACCOUNT_STATUS_*`, `CORRECTION_REQUEST_TO_USER`, all four `PAYOUT_*` messages (riders under a fleet manager are skipped by the automated run), broadcasts |
 | `FLEET_MANAGER` | `ACCOUNT_STATUS_*`, `CORRECTION_REQUEST_TO_USER`, `PAYOUT_SETTLEMENT_COMPLETED`, `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE`, `AGREEMENT_VERSION_PUBLISHED`, broadcasts |
-| `ADMIN`, `SUPER_ADMIN` | `ORDER_DISPATCH_ESCALATED_TO_ADMIN`, `NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, `CORRECTION_CONFIRMED_TO_ADMIN`, `NEW_INGREDIENT_PURCHASE_TO_ADMIN`, broadcasts, and their own `ACCOUNT_STATUS_*` if another admin changes their status |
+| `ADMIN`, `SUPER_ADMIN` | `ORDER_DISPATCH_ESCALATED_TO_ADMIN`, `ORDER_AUTO_READY_FALLBACK_TO_ADMIN`, `DELIVERY_SOS_TO_ADMIN`, `DELIVERY_OTP_LOCKED_TO_ADMIN`, `DELIVERY_VERIFICATION_ISSUE_TO_ADMIN`, `DELIVERY_RECEIPT_ANSWER_TO_ADMIN` (and `DELIVERY_MANUALLY_COMPLETED_TO_SUPER_ADMIN`, to `SUPER_ADMIN` only), `NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, `CORRECTION_CONFIRMED_TO_ADMIN`, `NEW_INGREDIENT_PURCHASE_TO_ADMIN`, broadcasts, and their own `ACCOUNT_STATUS_*` if another admin changes their status |
 
 Support chat and a plain SOS reach admins (and fleet managers for SOS) only as socket events. A rider SOS on an order is also pushed to admins (`DELIVERY_SOS_TO_ADMIN`; see [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#notifications-and-events)).
 
@@ -197,12 +202,12 @@ Templates are objects `{ title: { en, pt }, body: { en, pt } }`, where each valu
 a string or a function of the variables. They are aggregated in
 `utils/notificationTemplates.ts` into `pushNotificationMessages`; the type
 `TPushMessageKey` is the set of keys, so a caller cannot use a key that does not
-exist. Both languages exist for all 28 keys (executed: a script imported the
+exist. Both languages exist for all 44 keys (the earlier executed check imported the
 aggregate and printed every template).
 
 | Defining file | Keys | Sent? |
 | --- | --- | --- |
-| `modules/Order/order.pushMessages.ts` | `ORDER_PICKUP_CODE_TO_CUSTOMER`, `ORDER_REJECTED_TO_CUSTOMER`, `ORDER_CANCELED_BY_CUSTOMER_TO_VENDOR`, `ORDER_CANCELED_BY_CUSTOMER_TO_RIDER`, `ORDER_NEW_DISPATCH_TO_PARTNER`, `ORDER_DISPATCH_ESCALATED_TO_ADMIN`, `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`, `ORDER_NEW_TO_VENDOR`, `ORDER_STATUS_UPDATE_TO_VENDOR`, `DELIVERY_OTP_TO_CUSTOMER`, `ORDER_PICKUP_TIME_REMINDER_TO_CUSTOMER` | Yes (12) |
+| `modules/Order/order.pushMessages.ts` | `ORDER_PICKUP_CODE_TO_CUSTOMER`, `ORDER_REJECTED_TO_CUSTOMER`, `ORDER_CANCELED_BY_CUSTOMER_TO_VENDOR`, `ORDER_CANCELED_BY_CUSTOMER_TO_RIDER`, `ORDER_NEW_DISPATCH_TO_PARTNER`, `ORDER_DISPATCH_ESCALATED_TO_ADMIN`, `ORDER_AUTO_READY_FALLBACK_TO_ADMIN`, `ORDER_AUTO_READY_TO_PARTNER`, `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER`, `ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR`, `ORDER_NEW_TO_VENDOR`, `ORDER_STATUS_UPDATE_TO_VENDOR`, `DELIVERY_OTP_TO_CUSTOMER`, `ORDER_PICKUP_TIME_REMINDER_TO_CUSTOMER`, and the delivery-exception keys `DELIVERY_SOS_TO_ADMIN`, `DELIVERY_OTP_LOCKED_TO_ADMIN`, `DELIVERY_EXCEPTION_ACKNOWLEDGED_TO_PARTNER`, `DELIVERY_EXCEPTION_RESOLVED_TO_PARTNER`, `DELIVERY_OTP_RESET_TO_PARTNER`, `ORDER_HANDED_OVER_FROM_PARTNER`, `ORDER_HANDOVER_ASSIGNED_TO_PARTNER`, `DELIVERY_PARTNER_CHANGED_TO_CUSTOMER`, `ORDER_FAULT_CANCELED_TO_CUSTOMER`, `ORDER_CANCELED_BY_ADMIN_TO_PARTNER`, `DELIVERY_MANUALLY_COMPLETED_TO_SUPER_ADMIN`, `DELIVERY_VERIFICATION_ISSUE_TO_ADMIN`, `DELIVERY_RECEIPT_CONFIRMATION_TO_CUSTOMER`, `DELIVERY_RECEIPT_ANSWER_TO_ADMIN` | Yes (28) |
 | `modules/Order/order.pushMessages.ts` | `ORDER_NEED_MORE_TIME_TO_CUSTOMER` | **No caller** |
 | `modules/Auth/auth.pushMessages.ts` | `NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, `ACCOUNT_STATUS_APPROVED`, `ACCOUNT_STATUS_REJECTED`, `ACCOUNT_STATUS_BLOCKED`, `CORRECTION_REQUEST_TO_USER`, `CORRECTION_CONFIRMED_TO_ADMIN` | Yes (6). The three `ACCOUNT_STATUS_*` keys are built from the status at run time (`` `ACCOUNT_STATUS_${status}` ``) and all three statuses are valid input. |
 | `modules/Payout/payout.pushMessages.ts` | `PAYOUT_BANK_DETAILS_INCOMPLETE`, `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE`, `PAYOUT_SETTLEMENT_INITIATED`, `PAYOUT_SETTLEMENT_COMPLETED` | Yes (4) |
@@ -224,7 +229,7 @@ Notes that matter when editing templates:
 | --- | --- |
 | `ORDER_NEED_MORE_TIME_TO_CUSTOMER` | Template with `extensionMinutes`; no caller found. The code that added preparation extension minutes to global settings was removed earlier, which is the likely reason (**Inferred**). |
 | `type` values `OFFER`, `SYSTEM`, `TRANSACTION` | Valid in the model and in the broadcast validation, but no code path uses them. |
-| `channelId` `order_notification` | Used by only four events (see the data model in [Notifications](./notifications.md#notification-data-model)); everything else is `default`. |
+| `channelId` `order_notification` | Used by the order-operations pushes (new order to vendor, dispatch offer, dispatch escalation and auto-ready alerts, admin assignment, and the delivery-exception pushes to admins, riders and the receipt request to the customer); everything else is `default` (see [Notifications](./notifications.md#notification-data-model)). |
 | `sendTestPushNotification` payload `type: SYSTEM_ALERT` | Only the debug endpoint; nothing is stored. |
 
 ---

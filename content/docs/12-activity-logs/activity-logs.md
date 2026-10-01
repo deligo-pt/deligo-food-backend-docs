@@ -1,6 +1,6 @@
 ---
 title: Activity Logs
-description: "How the activity log works as implemented: the ActivityLog and archive models, the fire-and-forget createActivityLog helper and its three actor paths, what happens when a write fails, the complete inventory of the 72 call sites and 73 actions, who can read logs and how the list is filtered, why logs cannot be edited or deleted through the API, the daily archive-and-delete retention job, what is never recorded (IP, user agent, system jobs), and the gaps and inconsistencies around it."
+description: "How the activity log works as implemented: the ActivityLog and archive models, the fire-and-forget createActivityLog helper and its three actor paths, what happens when a write fails, the complete inventory of the 73 call sites and 84 actions, who can read logs and how the list is filtered, why logs cannot be edited or deleted through the API, the daily archive-and-delete retention job, what is never recorded (IP, user agent, system jobs), and the gaps and inconsistencies around it."
 order: 1
 ---
 
@@ -28,7 +28,7 @@ service, with the database calls replaced by in-memory stubs).
 | Collections | `ActivityLog` (active) and `ActivityLogArchive` (older entries). |
 | Who writes | Application code only, through `createActivityLog`. There is no create endpoint. |
 | Write style | Fire-and-forget: the helper returns at once, errors are only logged. A lost entry is never retried. |
-| Callers | 72 call sites (including 3 small helpers) using 73 defined actions, all of which have a caller. |
+| Callers | 73 call sites (including the small helpers) using 84 defined actions, all of which have a caller. |
 | Who reads | `ADMIN` with the `CAN_MANAGE_ACTIVITY_LOGS` permission, and `SUPER_ADMIN`. Nobody else, not even for their own entries. |
 | API | `GET /api/v1/activity-logs` (list) and `GET /api/v1/activity-logs/:id` (one). |
 | Edit or delete | Not possible through the API. Only the retention job deletes entries. |
@@ -130,7 +130,7 @@ between the action and the write loses the entry (**Inferred**).
 
 ## Trigger inventory
 
-All committed callers, extracted from the source by script: **72 call sites** in 30 files, using **73 distinct actions** (every defined action has a caller).
+All committed callers, extracted from the source by script: **73 call sites** in 31 files, using **84 distinct actions** (every defined action has a caller).
 "Helper" call sites are shared by several routes. Entity types are `ActivityEntityType` values unless noted. The actor column is the role admitted by the route
 (verified against the route definitions); the entry records whichever authenticated user actually called.
 
@@ -176,6 +176,17 @@ Flows: [User Lifecycle](../03-identity-access/user-lifecycle.md), [Authenticatio
 | `ORDER_CANCELED` | `WARNING` | `ORDER` | Customer | After the commit; `metadata.previousStatus`, `metadata.reason` |
 | `ORDER_REASSIGNMENT_NEEDED` | `WARNING` | `ORDER` | Delivery partner | `metadata.previousDeliveryPartnerId`, `metadata.reason` |
 | `ORDER_MANUALLY_ASSIGNED` | `INFO` | `ORDER` | `ADMIN` with `CAN_MANAGE_ORDERS`, `SUPER_ADMIN` | `metadata.deliveryPartnerId`, `metadata.note` |
+| `ORDER_DELIVERY_SOS_RAISED` | `DANGER` | `ORDER` | Delivery partner (the order's rider) | Only for a new alert or a newly opened or upgraded `RIDER_SOS` exception, not a duplicate press; `metadata.orderStatus`, `holdsOrder` (always `true`), `issueTags`, `locationStale`, `sosId` |
+| `ORDER_DELIVERY_OTP_LOCKED` | `DANGER` | `ORDER` | Delivery partner whose wrong code was the fifth | Written once, by the claim winner; `metadata.attempts`, `deliveryPartnerId`, `exceptionAlreadyOpen` |
+| `ORDER_DELIVERY_OTP_RESET` | `WARNING` | `ORDER` | `ADMIN` with `CAN_MANAGE_ORDERS`, `SUPER_ADMIN` | `metadata.reason`, `generation` (never the code) |
+| `ORDER_DELIVERY_EXCEPTION_ACKNOWLEDGED` | `INFO` | `ORDER` | same | `metadata.exceptionType` |
+| `ORDER_DELIVERY_EXCEPTION_RESOLVED` | `INFO` | `ORDER` | same | `metadata.resolution`, `note` |
+| `ORDER_PARTNER_REPLACED` | `WARNING` | `ORDER` | same | `metadata.previousDeliveryPartnerId`, `newDeliveryPartnerId`, `note`, `generation`, `exceptionType`, `sosId` |
+| `ORDER_DELIVERY_MANUALLY_COMPLETED` | `DANGER` | `ORDER` | same (`ADMIN` or `SUPER_ADMIN`) | `metadata.reason`, `previousStatus`, `deliveryPartnerId`, `exceptionType`, `basis` (`CUSTOMER_RECEIPT_CONFIRMED` or `OTP_VERIFIED`), `actorRole` |
+| `ORDER_FAULT_CANCELED` | `DANGER` | `ORDER` | same | `metadata.reason`, `exceptionType`, `basis` (`RIDER_SOS`, `CUSTOMER_DECLINED_RECEIPT`, or both), `deliveryPartnerId`, `refundStatus` |
+| `ORDER_DELIVERY_VERIFICATION_REPORTED` | `WARNING` | `ORDER` | Delivery partner | Not written for a duplicate report; `metadata.productHandedOver`, `hasNote`, `orderStatus` |
+| `ORDER_RECEIPT_CONFIRMATION_REQUESTED` | `WARNING` | `ORDER` | `ADMIN` with `CAN_MANAGE_ORDERS`, `SUPER_ADMIN` | `metadata.orderStatus` |
+| `ORDER_RECEIPT_CONFIRMATION_ANSWERED` | `INFO` (YES) / `WARNING` (NO) | `ORDER` | Customer (the order's own) | `metadata.received`, `previousAnswer`, `corrected` |
 | `PAYMENT_REFUNDED` | `WARNING` | `ORDER` | `ADMIN`, `SUPER_ADMIN` | `metadata.amount`, `metadata.currency: 'EUR'` (logged for a void refund too) |
 | `PAYMENT_TOKEN_CREATED` | `INFO` | `PAYMENT_TOKEN` | Customer | `metadata.last4` |
 | `PAYMENT_TOKEN_REMOVED` | `WARNING` | `PAYMENT_TOKEN` | Customer | |

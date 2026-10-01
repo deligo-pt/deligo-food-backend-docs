@@ -16,7 +16,7 @@ only once the order is `READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY`; every ea
 and the terminal statuses are refused. An accepted SOS also opens a `RIDER_SOS` delivery
 exception on the order so that admins can acknowledge it, let the rider continue, replace
 the rider, or cancel the order after a fault. That side is covered in [Rider SOS on an order](#rider-sos-on-an-order) and
-[Admin handling of a rider SOS](#admin-handling-of-a-rider-sos). The wider set of in-transit
+[Admin handling of a rider SOS](#admin-handling-of-a-rider-sos). The wider set of delivery
 recovery flows (OTP lock, verification issue, receipt confirmation, manual completion, which
 stay in-transit only) is
 in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md); this page
@@ -466,7 +466,7 @@ their audit trail is the order entries.
 
 ## Related documentation
 
-- [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md): the exception flows around an in-transit order (OTP lock, verification issue, receipt confirmation, manual completion, fault cancellation).
+- [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md): the exception flows around a ready or in-transit order (OTP lock, verification issue, receipt confirmation, manual completion, fault cancellation).
 - [Delivery Dispatch and Riders](../03-orders/delivery-dispatch.md): the rider's session location, dispatch and the rejected pool.
 - [Cancellations, Refunds and Settlement](../03-orders/cancellations-refunds-settlement.md): the refund after a fault cancellation.
 - [Support](./support.md): the separate support chat channel.

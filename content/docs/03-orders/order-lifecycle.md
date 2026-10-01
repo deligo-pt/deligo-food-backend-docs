@@ -109,7 +109,7 @@ Points that are easy to miss:
 flowchart TD
     P["PENDING"] -->|"vendor accepts / auto-accept"| PR["PREPARING"]
     P -->|"vendor rejects"| RJ["REJECTED"]
-    PR -->|"vendor marks ready / auto-ready cron at estimatedReadyAt"| RP["READY_FOR_PICKUP"]
+    PR -->|"vendor marks ready / auto-ready fallback 5 min after estimatedReadyAt"| RP["READY_FOR_PICKUP"]
     RP -->|"vendor verifies customer's pickup code"| PC["PICKED_UP_BY_CUSTOMER"]
     RP -->|"vendor after grace / no-show cron"| NS["NO_SHOW"]
 ```

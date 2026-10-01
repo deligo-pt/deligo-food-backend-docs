@@ -28,7 +28,7 @@ better read there (service internals, retention), this page links to it.
 
 | Question | Answer |
 | --- | --- |
-| Is there one notification system? | Yes: `NotificationService` (`modules/Notification/notification.service.ts`). Every push and every in-app record goes through it. There are 26 call sites outside the module (25 service calls plus the admin broadcast controller). |
+| Is there one notification system? | Yes: `NotificationService` (`modules/Notification/notification.service.ts`). Every push and every in-app record goes through it. The call sites are spread over the order, auth, payout, product, ingredient-order, cart and agreement modules, the cron jobs and the admin broadcast controller. |
 | Where are notifications stored? | MongoDB `Notification` collection. No index, no TTL, no cleanup job. |
 | Push channel | FCM, **data-only** messages, sent to every FCM token stored on the user's `loginDevices`. |
 | Does a push guarantee a record (or the reverse)? | No. A record is written after the push attempt whether or not the push worked. `sendToRole` writes a record only for users who have a token. |
@@ -107,7 +107,7 @@ The record is created after the push attempt, so a push failure never prevents t
 | `PROMOTIONAL` | Admin broadcast default | The broadcast `type` field accepts any value in this list, so a broadcast can carry a different type. |
 | `OFFER`, `SYSTEM`, `TRANSACTION` | **Nothing** | Allowed by the enum, no sender found. |
 
-`channelId` is not stored. It travels only inside the FCM `data` payload and is `order_notification` for four events (new order to vendor, rider dispatch offer, dispatch escalation to admins, admin assignment to rider); every other call uses `default`.
+`channelId` is not stored. It travels only inside the FCM `data` payload and is `order_notification` for the order-operations pushes (new order to vendor, rider dispatch offer, dispatch escalation and auto-ready alerts to admins and the rider, admin assignment to rider, and the delivery-exception pushes to admins, riders and the receipt confirmation request to the customer); every other call uses `default`.
 
 ---
 
