@@ -1,6 +1,6 @@
 ---
 title: SOS
-description: "The emergency SOS feature as implemented: the Sos model, who can trigger an alert, the order-linked rider SOS and its RIDER_SOS delivery exception (pre-pickup versus in-transit, location and stale-location handling, idempotency, admin acknowledge, resolve, rider replacement and fault cancellation), notifications, socket rooms, activity logging, concurrency protections, who can read alerts over REST, and the gaps found in the code."
+description: "The emergency SOS feature as implemented: the Sos model, who can trigger an alert, the order-linked rider SOS and its RIDER_SOS delivery exception (the allowed order statuses, location and stale-location handling, idempotency, admin acknowledge, resolve, rider replacement and fault cancellation), notifications, socket rooms, activity logging, concurrency protections, who can read alerts over REST, and the gaps found in the code."
 order: 4
 ---
 
@@ -11,12 +11,14 @@ the route, an admin). It is stored with the sender's location, pushed to monitor
 Socket.IO, and worked by admins through a small status workflow. It is separate from
 [Support](./support.md).
 
-A rider SOS that is tied to an order has an extra order-level side. When the food is
-already with the rider, it also opens a `RIDER_SOS` delivery exception on the order so
-that admins can acknowledge it, resolve it, replace the rider, or cancel the order after
-a fault. That side is covered in [Rider SOS on an order](#rider-sos-on-an-order) and
+A rider SOS that is tied to an order has an extra order-level side. A rider can raise it
+only once the order is `READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY`; every earlier status
+and the terminal statuses are refused. An accepted SOS also opens a `RIDER_SOS` delivery
+exception on the order so that admins can acknowledge it, let the rider continue, replace
+the rider, or cancel the order after a fault. That side is covered in [Rider SOS on an order](#rider-sos-on-an-order) and
 [Admin handling of a rider SOS](#admin-handling-of-a-rider-sos). The wider set of in-transit
-recovery flows (OTP lock, verification issue, receipt confirmation, manual completion) is
+recovery flows (OTP lock, verification issue, receipt confirmation, manual completion, which
+stay in-transit only) is
 in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md); this page
 keeps to the SOS.
 
@@ -37,7 +39,8 @@ model schema with no database), **Inferred** or **Unresolved**.
 | Statuses | `ACTIVE`, `INVESTIGATING`, `RESOLVED`, `FALSE_ALARM`. |
 | Who manages | `ADMIN` and `SUPER_ADMIN` change the status. For an order-linked rider SOS they also use the order routes (`CAN_MANAGE_ORDERS` for an `ADMIN`). |
 | Notification | A plain alert: Socket.IO only. A rider SOS on an order also pushes `ADMIN` / `SUPER_ADMIN` (`DELIVERY_SOS_TO_ADMIN`, with a stored record). The customer is never told about the SOS. |
-| Order effect | Never changes `orderStatus`. Never cancels an order by itself. Opens a `RIDER_SOS` exception only while the order is `PICKED_UP` or `ON_THE_WAY`. |
+| Allowed order statuses (rider SOS on an order) | `READY_FOR_PICKUP`, `PICKED_UP`, `ON_THE_WAY` only. `ASSIGNED` and earlier, `DELIVERED` and `CANCELED` are refused with `400` (`RIDER_SOS_NOT_ALLOWED_AT_ORDER_STATUS`). |
+| Order effect | Never changes `orderStatus`. Never cancels an order by itself. Every accepted rider SOS on an order opens a `RIDER_SOS` exception, which is a flag for admins, not a lock on the rider. |
 | Audit | `SOS_STATUS_CHANGED` when an admin changes the status; order-linked actions write their own `ORDER_*` entries (see [Activity logging](#activity-logging)). A plain trigger is not logged. |
 
 ---
@@ -103,26 +106,47 @@ the alert.
   so order ids cannot be probed.
 - This path checks the role and the assignment. It does not check the rider profile's
   `APPROVED` status.
-- The order's status is **not** restricted to in-transit orders: an order in any status that
-  still carries the rider is accepted, and only `PICKED_UP` / `ON_THE_WAY` counts as holding
-  the order (next section).
+- The order's status is checked after ownership (next section): a rider who is not assigned to
+  the order gets `404` whatever the status, and an assigned rider on a status that is not
+  allowed gets `400`.
 
-### Pre-pickup SOS versus in-transit SOS
+### Which order statuses allow an SOS
 
-The order status never changes in either case, and no SOS cancels an order.
+A rider SOS is allowed only at `READY_FOR_PICKUP`, `PICKED_UP` and `ON_THE_WAY`
+(`RIDER_SOS_ORDER_STATUSES`). The check runs before any location is read or anything is
+written.
 
-| | Before pickup (any status other than `PICKED_UP` / `ON_THE_WAY`, for example `ASSIGNED` or `READY_FOR_PICKUP`) | In transit (`PICKED_UP` / `ON_THE_WAY`) |
+| Order status | Result |
+| --- | --- |
+| `PENDING`, `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED`, `ASSIGNED` | **Refused** (`400`, `RIDER_SOS_NOT_ALLOWED_AT_ORDER_STATUS`). No alert, no exception, no admin notification. A rider who cannot do an `ASSIGNED` order uses `REASSIGNMENT_NEEDED`, which is unchanged and available only from `ASSIGNED`. |
+| `READY_FOR_PICKUP` | **Allowed.** The food is still at the vendor. |
+| `PICKED_UP`, `ON_THE_WAY` | **Allowed.** The food is with the rider. |
+| `DELIVERED`, `CANCELED` and every other terminal status | **Refused** (`400`), even when the order still names the rider. |
+
+The status never changes and no SOS cancels an order. Every accepted SOS:
+
+- creates the `Sos` alert (`ACTIVE`) with the order attached;
+- opens the `RIDER_SOS` delivery exception (`OPEN`) with the issue tags, the rider's note and
+  the location, or records a repeat on an exception that is already open;
+- alerts admins (`DELIVERY_SOS_TO_ADMIN` push, `new-sos-alert`) and emits
+  `DELIVERY_EXCEPTION_UPDATED` (`OPENED`);
+- returns `holdsOrder: true`. The field is always `true` now and is kept so existing clients
+  keep working.
+
+What differs between the allowed statuses is only what the admin tools do afterwards:
+
+| | `READY_FOR_PICKUP` | `PICKED_UP` / `ON_THE_WAY` |
 | --- | --- | --- |
-| `Sos` alert | Created (`ACTIVE`) with the order attached | Created (`ACTIVE`) with the order attached |
-| `RIDER_SOS` delivery exception on the order | **Not opened.** The order is not held | **Opened** (`OPEN`), with the issue tags, the rider's note and the location |
-| `holdsOrder` in the response | `false` | `true` |
-| Admins alerted (`DELIVERY_SOS_TO_ADMIN` push, `new-sos-alert`) | Yes | Yes |
-| `DELIVERY_EXCEPTION_UPDATED` (`OPENED`) | No | Yes |
-| Admin order tools (acknowledge, resolve, replace rider, fault cancel) | Not available, as there is no exception; the alert is worked through `PATCH /sos/:id/status` | Available (see [Admin handling](#admin-handling-of-a-rider-sos)) |
+| Acknowledge, resolve (rider continues or false alarm) | Available | Available |
+| Replace the rider | Available. No delivery code exists yet, so none is created or sent; the new rider gets the normal assignment push and goes to the vendor | Available. A new delivery code goes to the customer and the new rider collects the food from the handover location |
+| Fault cancellation | Available | Available |
+| OTP reset, verification issue, receipt confirmation, manual completion | Not available (in transit only) | Available where their own rules allow |
+| Nearby riders origin | The order's `pickupAddress` | The incident or rider location |
 
 An open exception is a flag for admins, not a lock on the rider: it does not block the
-rider's own status updates. A rider delivering the order, or a customer cancelling it, closes
-the exception (`ORDER_CLOSED`).
+rider's own status updates, so a rider with an open SOS can still move from `READY_FOR_PICKUP`
+to `PICKED_UP`, and the exception then simply continues as an in-transit one. A rider delivering the
+order, or a customer cancelling it, closes the exception (`ORDER_CLOSED`).
 
 ### Location and stale locations
 
@@ -145,15 +169,13 @@ the exception (`ORDER_CLOSED`).
 
 ### Duplicate presses (idempotency)
 
-- **In transit.** If a `RIDER_SOS` exception is already `OPEN` or `ACKNOWLEDGED`, the press is
+- **Repeat while the exception is live.** If a `RIDER_SOS` exception is already `OPEN` or `ACKNOWLEDGED`, the press is
   treated as a repeat: the exception's `reportCount` is incremented and its `lastReportedAt` and
   location are refreshed, the alert's location is refreshed while it is still `ACTIVE` or
   `INVESTIGATING`, and the response has `alreadyActive: true`. **No** new alert, admin push,
   socket alert, `DELIVERY_EXCEPTION_UPDATED` event or activity-log entry is produced.
-- **Before pickup.** The partial unique index on `(userId.id, orderId)` for `ACTIVE` alerts
-  collapses a repeat into the existing alert (location refreshed, `alreadyActive: true`, silent).
-  Once an admin has moved the alert out of `ACTIVE` (for example `INVESTIGATING`), a new press
-  creates a new alert.
+- **Unique index.** The partial unique index on `(userId.id, orderId)` for `ACTIVE` alerts
+  collapses concurrent presses into one alert, so simultaneous presses cannot create two.
 - **Lost record healing.** If the exception exists but its alert record is missing, the alert is
   re-created and linked; if a live alert already exists for the rider and order (for example
   raised earlier through the plain endpoint), it is attached to the exception instead of
@@ -199,8 +221,8 @@ stateDiagram-v2
 - After saving, the server emits `sos-status-updated-<id>` with the alert to the `SOS_ALERTS_POOL` room and to the alert owner's personal `user_<userId>` room (not to every socket).
 - The controller writes `SOS_STATUS_CHANGED` (type `WARNING`, `metadata.newStatus`).
 
-This route changes only the alert. It does **not** touch the order's exception, so for an
-in-transit order the order routes below are the way to act on the order itself.
+This route changes only the alert. It does **not** touch the order's exception, so for an order
+with a `RIDER_SOS` exception the order routes below are the way to act on the order itself.
 
 ### How the order actions move the alert
 
@@ -223,11 +245,11 @@ closes the alert with `PATCH /sos/:id/status`.
 ## Admin handling of a rider SOS
 
 All routes use `auth('ADMIN', 'SUPER_ADMIN', ['CAN_MANAGE_ORDERS'])`; the permission is enforced
-only for `ADMIN`. They apply only to a delivery order that is `PICKED_UP` or `ON_THE_WAY`.
+only for `ADMIN`. The SOS actions (queue, acknowledge, resolve, replace, fault cancel) apply to a delivery order that is `READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY`.
 
 ### Queue
 
-`GET /orders/delivery-exceptions` lists exceptions on in-transit orders (filter by `status`, `type`,
+`GET /orders/delivery-exceptions` lists live exceptions on `READY_FOR_PICKUP`, `PICKED_UP` and `ON_THE_WAY` orders (filter by `status`, `type`,
 paging) with the exception's type and status, issue tags, the rider's note, the location with its
 `isStale` flag and capture time, the rider's name, contact and last known position, the vendor
 name, and the OTP attempt counters (never the code).
@@ -256,8 +278,8 @@ max 500). This is the recovery for a `RIDER_SOS`; a locked OTP never replaces th
 
 Conditions, all checked in one transaction:
 
-- The order is a delivery order, in transit, with an `OPEN` or `ACKNOWLEDGED` **`RIDER_SOS`**
-  exception and a rider on it. Without that: `NO_ACTIVE_DELIVERY_EXCEPTION`, or
+- The order is a delivery order at `READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY`, with an `OPEN`
+  or `ACKNOWLEDGED` **`RIDER_SOS`** exception and a rider on it. Without that: `NO_ACTIVE_DELIVERY_EXCEPTION`, or
   `PARTNER_REPLACEMENT_REQUIRES_SOS` for an OTP lock.
 - The new rider differs from the current one (`PARTNER_REPLACEMENT_SAME_PARTNER`) and is
   `APPROVED`, `IDLE`, not deleted and holding no order; they are claimed as part of the
@@ -265,13 +287,17 @@ Conditions, all checked in one transaction:
   `NOT_FOUND_MESSAGE`, `PARTNER_NOT_APPROVED_FOR_ASSIGNMENT`, `PARTNER_NOT_AVAILABLE_FOR_ASSIGNMENT`.
   No distance limit is enforced; the admin chooses from the nearby list below.
 
-What the swap does, in one conditional write that pins the old rider, the in-transit status and
+What the swap does, in one conditional write that pins the old rider, an SOS-eligible status and
 the open `RIDER_SOS` exception:
 
 - Sets `deliveryPartnerId` to the new rider. The order status is unchanged.
-- **New delivery OTP.** A fresh random code replaces the old one: attempts back to 0, any lock
-  cleared, `generation` and `resetCount` incremented, `resetAt` / `resetBy` recorded. The old code
-  can never be valid again. The new code goes only to the customer.
+- **New delivery OTP (in transit only).** When the food is with the rider (`PICKED_UP` /
+  `ON_THE_WAY`), a fresh random code replaces the old one: attempts back to 0, any lock cleared,
+  `generation` and `resetCount` incremented, `resetAt` / `resetBy` recorded. The old code can never
+  be valid again. The new code goes only to the customer, and the new rider gets the handover
+  message with the incident location. At `READY_FOR_PICKUP` there is no delivery code yet (it is
+  generated when the rider picks the food up), so none is created or sent, the customer gets no
+  code push, and the new rider gets the same push as an admin assignment and goes to the vendor.
 - Resolves the exception with `PARTNER_REPLACED` (note, resolver and role recorded).
 - **Old rider handling.** The old rider's order link is cleared and the rider is set `OFFLINE` with
   `isWorking: false` (they must choose to go online again), and their id is added to the order's
@@ -283,14 +309,15 @@ the open `RIDER_SOS` exception:
 
 The delivery is settled to the rider who completes it, so the replaced rider earns nothing from it.
 
-### Nearby riders for an in-transit incident
+### Nearby riders for an SOS
 
 `GET /orders/:orderId/nearby-partners` (read-only, nothing reserved) searches around a different
-origin once the order is in transit, and reports it in `searchOrigin.source`:
+origin once the order is in transit, and reports it in `searchOrigin.source`. At `READY_FOR_PICKUP`
+the food is still at the vendor, so the search stays around the `pickupAddress`:
 
 | Order | Origin | `source` |
 | --- | --- | --- |
-| Before pickup | The order's `pickupAddress` | `PICKUP_ADDRESS` |
+| Before pickup, including `READY_FOR_PICKUP` with an open SOS | The order's `pickupAddress` | `PICKUP_ADDRESS` |
 | `PICKED_UP` / `ON_THE_WAY` with an `OPEN` or `ACKNOWLEDGED` exception that has a usable location | The reported incident location (even if marked stale) | `INCIDENT_LOCATION` |
 | `PICKED_UP` / `ON_THE_WAY` otherwise | The assigned rider's current session location | `RIDER_LOCATION` |
 | In transit but no usable coordinates at all | Falls back to the `pickupAddress` | `PICKUP_ADDRESS` |
@@ -302,11 +329,13 @@ and excludes the order's rejected pool (so a replaced rider does not reappear).
 
 If the rider cannot continue and no replacement is available, the admin uses
 `PATCH /orders/:orderId/fault-cancel` (body `reason`, 10-500 characters). It is **never
-automatic**, and an SOS on its own does not cancel anything. It needs an open `RIDER_SOS` (or the
-customer's explicit NO to a receipt confirmation); a locked OTP alone is refused. The order
+automatic**, and an SOS on its own does not cancel anything. It needs an open `RIDER_SOS`, at
+`READY_FOR_PICKUP` or in transit (or the customer's explicit NO to a receipt confirmation, which
+only exists in transit); a locked OTP alone is refused. The order
 becomes `CANCELED` with `refundStatus: PENDING`, any open exception is closed in the same
 transaction, and the rider is released and set `OFFLINE`. No stock is restored and no vendor, fleet
-or platform settlement runs. The refund itself is the existing admin refund route. See
+or platform settlement runs; this holds at `READY_FOR_PICKUP` too, even though the vendor had
+already prepared the food. The refund itself is the existing admin refund route. See
 [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#fault-cancellation) and
 [Cancellations, Refunds and Settlement](../03-orders/cancellations-refunds-settlement.md#refunds).
 
@@ -369,7 +398,7 @@ their audit trail is the order entries.
   `ACTIVE` alerts makes concurrent duplicate presses collapse into one alert.
 - **The exception is claimed with conditional writes.** Opening, upgrading from an OTP lock and
   recording a repeat are three separate conditional updates tried in turn (up to 3 attempts), each
-  pinned to the assigned rider, the in-transit status and the exception's current state, so
+  pinned to the assigned rider, an SOS-eligible status and the exception's current state, so
   simultaneous presses cannot open two exceptions or double-count the alert. If all attempts fail the
   request fails with a retry message instead of guessing.
 - **Only the winner alerts.** The admin push, socket alert, activity-log entry and `OPENED` event are
@@ -422,6 +451,7 @@ their audit trail is the order entries.
 7. **The generic path does not handle the duplicate index.** For a vendor, branch or fleet manager alert on an order, a second `ACTIVE` alert for the same user and order hits the unique index. **Inferred:** it surfaces as an error rather than a quiet repeat, since only the rider path catches that case.
 8. **The plain trigger ignores the richer fields.** `currentLocation` and `occurredAt` are validated but unused outside the rider-on-order path, so a plain alert has no stale flag or `occurredAt`.
 9. **A hold is a flag.** An open `RIDER_SOS` exception does not stop the rider's own status updates; only the admin actions and the exception's closure on delivery or cancel change its state.
+10. **A fault cancel at `READY_FOR_PICKUP` pays nobody.** The vendor has already prepared the food, but a fault cancellation restores no stock and runs no vendor, fleet or platform settlement; only the customer's refund follows. The backend applies the same rule at every allowed status.
 
 ---
 
@@ -429,7 +459,8 @@ their audit trail is the order entries.
 
 - Only the model validation in #1 was executed. Socket behavior, the note-length effect and #7 are read from the code.
 - Whether any client shows an SOS differently for fleet managers, or reacts to `holdsOrder`, is not known from the backend.
-- Whether a rider app shows the pre-pickup SOS differently from the in-transit one is not known from the backend.
+- How the rider app handles the `400` for a status that does not allow an SOS (for example `ASSIGNED`) is not known from the backend.
+- The backend refuses an SOS at `ASSIGNED`; whether a rider who is blocked there is guided to `REASSIGNMENT_NEEDED` in the app is not known.
 
 ---
 

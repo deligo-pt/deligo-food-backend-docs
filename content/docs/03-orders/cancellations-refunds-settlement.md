@@ -56,9 +56,9 @@ the error for every status are in
 - The customer is not notified by push or email. **Inferred:** the customer only
   learns of it through the `ORDER_STATUS_UPDATED` event or by reading the order.
 
-**Admin fault cancel (in-transit orders).** A separate admin path ends a
-`PICKED_UP` / `ON_THE_WAY` order as `CANCELED` when the delivery failed: an open
-rider SOS, or the customer saying they did not receive the order. It sets
+**Admin fault cancel (`READY_FOR_PICKUP` and in-transit orders).** A separate admin path ends a
+`READY_FOR_PICKUP`, `PICKED_UP` or `ON_THE_WAY` order as `CANCELED` when the delivery failed: an open
+rider SOS, or (in transit) the customer saying they did not receive the order. It sets
 `refundStatus: PENDING` (a full refund is owed), does **not** restore stock (the
 goods left the vendor), runs no vendor, fleet or platform settlement, releases the
 rider and notifies the customer. The refund then goes through the admin refund
