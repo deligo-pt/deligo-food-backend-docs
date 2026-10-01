@@ -91,7 +91,7 @@ Columns: **C** customer, **V** vendor, **SV** sub-vendor, **DP** delivery partne
 | Confirm a correction request | — | Y | Y | Y | Y | — | — | Owner only. [Onboarding Journey](./onboarding-journey.md#approval-rejection-correction-and-blocking) |
 | Onboard another account (`register/onboard`) | — | Y | — | — | Y | Y | Y | Which target roles each caller may create is only partly enforced. [Authorization](../03-identity-access/authorization.md#onboarding-authorization) |
 | Read and sign own agreement | — | Y | — | — | Y | Y† | Y | An admin acts only on rows it created. [Agreements](../07-agreements/agreements.md#endpoints-and-who-may-call-them) |
-| Soft-delete an account | Y | Y | Y | Y | Y | Y | Y | A non-admin may delete only its own account (a fleet manager also its riders) |
+| Soft-delete an account | Y | Y | Y | Y | Y | Y | Y | A non-admin may delete only its own account. A parent vendor cannot delete a branch and a fleet manager cannot delete a rider |
 | Upload a file `POST /uploads` | Y | Y | — | Y | Y | Y | Y | A branch is not in the route list |
 | Read own notifications | Y | Y | Y | Y | Y | Y | Y | [Notifications](../06-notifications/notifications.md) |
 

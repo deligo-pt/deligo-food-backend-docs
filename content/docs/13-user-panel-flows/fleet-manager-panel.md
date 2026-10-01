@@ -42,7 +42,7 @@ list. It is also one of the two roles (with `VENDOR`) that must sign an agreemen
 | Approval | `PENDING` → `SUBMITTED` → `APPROVED` by an admin; only an approved manager can onboard others | [Onboarding Journey](./onboarding-journey.md#approval-rejection-correction-and-blocking) |
 | Lock | Locked on submit and still locked after approval; changes need a correction grant or an admin | [User Lifecycle](../03-identity-access/user-lifecycle.md#isupdatelocked-through-the-lifecycle) |
 | Sessions, password | Password login, per-device sessions, `change-password` and `forgot-password` | [Authentication](../03-identity-access/authentication.md) |
-| Deleting | `DELETE /auth/soft-delete/:userId`: its own account, or a rider it owns | [User Lifecycle](../03-identity-access/user-lifecycle.md#soft-delete) |
+| Deleting | `DELETE /auth/soft-delete/:userId`: its own account only. It cannot delete a rider it owns (read from the code) | [User Lifecycle](../03-identity-access/user-lifecycle.md#soft-delete) |
 
 ---
 
@@ -87,7 +87,7 @@ flowchart TD
 | Submit | Rider, its manager, or an admin | `PATCH /auth/:userId/submitForApproval` | No agreement for a rider. A manager may submit only riders it owns |
 | Decide | Admin only | `PATCH /auth/:userId/approved-rejected-user` | **A fleet manager cannot approve, reject, block or request corrections** |
 | Correct | Rider or manager, after an admin grant | The normal update routes | The grant is tied to the rider's profile. A manager may edit within it for an owned rider; only the rider confirms (`confirm-corrections` is own-account only) |
-| Remove | Fleet manager | `DELETE /auth/soft-delete/:userId` | A rider it owns; sessions end at once |
+| Remove | Admin only | `DELETE /auth/soft-delete/:userId` | The route lists the fleet manager, but the service refuses any non-admin that is not deleting its own account, so a manager **cannot** remove a rider it owns. The ownership branch that follows in the service is unreachable (read from the code, not run) |
 
 What the manager sees of its riders:
 
@@ -252,6 +252,7 @@ See [Support](../02-platform/support.md#who-can-do-what) and [SOS](../02-platfor
 | Ratings summary | Admitted at the route, effectively vendor-only | [Ratings](../11-ratings/ratings.md#summary-get-rating-summary) |
 | Referrals, points | No route. `GET /referrals/my-referrals` and the points routes do not list the role | [Points and Referrals](../09-offers-and-coupons/points-and-referrals.md) |
 | Customers | `GET /customers/:customerId` lists the role on the route but is effectively admin-only | [Customer Addresses](../03-identity-access/customer-addresses.md#what-reads-these-values) |
+| Deleting a rider | The soft-delete route lists the fleet manager, and the service has a rider-ownership branch for it, but an earlier own-account check refuses any non-admin deleting someone else, so the branch is unreachable (read from the code, not run). Only the rider or an admin can remove a rider | [User Lifecycle](../03-identity-access/user-lifecycle.md#soft-delete) |
 | Rider documents | `PATCH .../docImage` exists for riders, but there is no `DELETE` route for rider documents | [Onboarding Journey](./onboarding-journey.md#delivery-partner) |
 | Onboarding targets | The service's role map is meant to limit who may create which role, but its keys do not match for `delivery-partner`, `fleet-manager` and `sub-vendor`, so a fleet manager passes the route for any of them. `VENDOR` and `ADMIN` targets are refused. A branch created this way has no parent (**Inferred**) | [Onboarding Journey](./onboarding-journey.md#which-callers-can-onboard-whom) |
 | Agreement | Branches and riders have no agreement; the manager has one and is gated like a vendor | [Agreement Gate](../07-agreements/agreement-gate.md#short-answers) |

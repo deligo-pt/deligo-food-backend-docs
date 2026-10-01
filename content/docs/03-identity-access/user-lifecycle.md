@@ -204,7 +204,7 @@ refuses self-service edits (`UPDATE_LOCKED`) while still allowing staff to edit
 | **Entry** | `DELETE /api/v1/auth/soft-delete/:userId` |
 | **Auth gate** | `auth('ADMIN', 'SUPER_ADMIN', 'FLEET_MANAGER', 'DELIVERY_PARTNER', 'VENDOR', 'SUB_VENDOR', 'CUSTOMER')` |
 | **Service** | `AuthServices.softDeleteUser` |
-| **Guards** | Caller must be `APPROVED` (`DELETE_UNAPPROVED_DENIED`); target must exist and not already be soft-deleted; `SUPER_ADMIN` can never be deleted (`CANNOT_DELETE_SUPER_ADMIN`); a non-admin caller may only delete **their own** account (`DELETE_PERMISSION_DENIED`); a `FLEET_MANAGER` deleting a `DELIVERY_PARTNER` must own them (`currentFleetManagerId`) or it is their own account |
+| **Guards** | Caller must be `APPROVED` (`DELETE_UNAPPROVED_DENIED`); target must exist and not already be soft-deleted; `SUPER_ADMIN` can never be deleted (`CANNOT_DELETE_SUPER_ADMIN`); a non-admin caller (a `FLEET_MANAGER` and a parent `VENDOR` included) may only delete **their own** account (`DELIVERY_PARTNER` and `SUB_VENDOR` rows therefore can be removed only by themselves or by an admin). The later `FLEET_MANAGER` ownership branch (`DELETE_FLEET_PARTNER_DENIED`) cannot be reached for another user, because the own-account check throws first (read from the code, not run) |
 | **Changes (transaction)** | `AuthUser.isDeleted = true`, `AuthUser.loginDevices = []`; profile `isDeleted = true`. For a `SUB_VENDOR`, the parent vendor's branch counts are recomputed |
 | **Side effects** | `createActivityLog(USER_SOFT_DELETED)` (controller). No email or push notification is wired for deletion |
 | **Response** | `200` `SOFT_DELETE_SUCCESS`, `data: { profileId }` |
@@ -241,7 +241,7 @@ not touched by this flow.
 | `VENDOR` | Self-registers or is onboarded; agreement must be signed before `submitForApproval` and before `APPROVED`; approval triggers agreement finalization |
 | `SUB_VENDOR` | Only created via onboarding (by its parent `VENDOR` or an admin with `parentVendorId`); inherits business fields from the parent; parent branch counts recomputed on create, soft delete, and permanent delete; has no agreement row or submit/approve agreement pre-check of its own, but its requests are still gated through its parent's agreement (see [Authorization](./authorization.md#the-agreement-gate-as-an-authorization-constraint)) |
 | `FLEET_MANAGER` | Same agreement-gated flow as `VENDOR` |
-| `DELIVERY_PARTNER` | Self-registers or is onboarded by an admin or `FLEET_MANAGER`; a `FLEET_MANAGER` may submit-for-approval and soft-delete only partners they own (`currentFleetManagerId`); not agreement-gated |
+| `DELIVERY_PARTNER` | Self-registers or is onboarded by an admin or `FLEET_MANAGER`; a `FLEET_MANAGER` may submit-for-approval only partners they own (`currentFleetManagerId`), and cannot soft-delete them (see [Soft delete](#soft-delete)); not agreement-gated |
 | `ADMIN` | Onboarded only by a `SUPER_ADMIN`; goes through `PENDING → SUBMITTED → APPROVED`; not agreement-gated |
 | `SUPER_ADMIN` | Seeded once from environment configuration; cannot be soft- or permanently deleted; cannot use password recovery |
 

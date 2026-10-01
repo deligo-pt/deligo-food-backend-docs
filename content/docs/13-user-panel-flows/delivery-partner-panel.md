@@ -40,7 +40,7 @@ A rider has no part in pickup orders.
 | Agreement | None. A rider is never subject to the agreement gate | [Agreement Gate](../07-agreements/agreement-gate.md#short-answers) |
 | Fleet manager | Set at onboarding by a fleet manager, or by an admin through `assign-fleet-manager`. **No route clears or changes it afterwards** | [Onboarding Journey](./onboarding-journey.md#delivery-partner) |
 | Sign-in and sessions | Password login with a verified email; per-device sessions; `change-password`, `forgot-password` and `reset-password` available | [Authentication](../03-identity-access/authentication.md) |
-| Deleting the account | `DELETE /auth/soft-delete/:userId`, its own account, or its fleet manager | [User Lifecycle](../03-identity-access/user-lifecycle.md#soft-delete) |
+| Deleting the account | `DELETE /auth/soft-delete/:userId`, its own account only (its fleet manager is refused), or an admin | [User Lifecycle](../03-identity-access/user-lifecycle.md#soft-delete) |
 
 **Approval is what makes a rider eligible for orders**, but it is not checked on every
 route; see [Restrictions and route gaps](#9-restrictions-and-route-gaps).
