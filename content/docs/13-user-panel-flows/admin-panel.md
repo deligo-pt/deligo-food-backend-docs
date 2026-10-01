@@ -172,11 +172,16 @@ An admin's power over a single order is **narrow**.
 | Assign a rider | `PATCH /orders/:orderId/assign-partner` | `CAN_MANAGE_ORDERS`. Only a delivery order in `AWAITING_PARTNER` without a rider; the rider must be approved, idle and free; the rider and vendor are pushed | Same page |
 | Be alerted | Push `ORDER_DISPATCH_ESCALATED_TO_ADMIN` | Once per order, after `estimatedReadyAt` passes with no rider | [Order Automation](../03-orders/order-automation.md#auto-dispatch-retry-and-escalation) |
 
-What an admin **cannot** do to an order at HEAD: cancel it, reject it, change its status,
-mark it ready, complete it, release a locked delivery code, or reassign an order from a rider
-who already holds it. The only intervention is assigning a rider to an order that has none.
-`CANCELED` appears in the order constants with an "admin" comment, but there is no admin
-cancellation path ([Order Lifecycle](../03-orders/order-lifecycle.md#implementation-notes-and-inconsistencies)).
+For an order that is already in transit (`PICKED_UP` / `ON_THE_WAY`), an admin can also
+work the delivery exceptions: acknowledge or resolve a rider SOS, reset a locked delivery
+OTP, replace the rider after an SOS, ask the customer to confirm receipt, complete the
+delivery manually (with the customer's confirmation or a verified OTP) and cancel it as
+a delivery fault (an open SOS or the customer's NO). Same `CAN_MANAGE_ORDERS` rule. These
+are described in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md).
+
+What an admin **cannot** do to an order: reject it, change its status freely, mark it
+ready, or cancel it other than through the fault-cancel rule above. There is no general
+admin cancellation path ([Order Lifecycle](../03-orders/order-lifecycle.md#implementation-notes-and-inconsistencies)).
 After escalation there is no timeout; the order waits for an admin or a vendor broadcast.
 
 ---
@@ -306,7 +311,7 @@ only, and a super admin's soft-delete-all affects every user's notifications.
 | Close | `PATCH /support/tickets/:ticketId/close`; logs `SUPPORT_TICKET_CLOSED` | [Support](../02-platform/support.md#closing) |
 | Live alerts | Joins `admin-notifications-room` on connect and receives `incoming-notification` for messages sent **over the socket**; a message sent over REST emits nothing | [Support](../02-platform/support.md#socketio-events) |
 | SOS monitoring | `join-sos-monitoring`, then `new-sos-alert`; `GET /sos`, `GET /sos/nearby` (needs the admin's own stored location), `GET /sos/stats`, `GET /sos/user/:id`, `GET /sos/:id` | [SOS](../02-platform/sos.md#reading-alerts-over-rest) |
-| SOS status | `PATCH /sos/:id/status`: `INVESTIGATING`, `FALSE_ALARM`, `RESOLVED`; only `RESOLVED` is final. Logs `SOS_STATUS_CHANGED`. The update is emitted to every connected socket | [SOS](../02-platform/sos.md#status-workflow) |
+| SOS status | `PATCH /sos/:id/status`: `INVESTIGATING`, `FALSE_ALARM`, `RESOLVED`; only `RESOLVED` is final. Logs `SOS_STATUS_CHANGED`. The update is emitted to the SOS monitoring room and the alert owner only. For a rider SOS on an order, the order routes in section 8 also update the alert | [SOS](../02-platform/sos.md#status-workflow) |
 | Raising an SOS | `POST /sos/trigger` lists `ADMIN`, but **Executed:** the alert fails validation, so an admin cannot raise one | [SOS](../02-platform/sos.md#mismatches-and-inconsistencies) |
 
 ---
@@ -367,7 +372,7 @@ enforced. See [Analytics](../02-platform/analytics.md#mismatches-and-inconsisten
 | Area | Asymmetry | Owning page |
 | --- | --- | --- |
 | Permissions | Five enforced, nine not. A permission is needed to read the ingredient catalog but not to refund, finalize a payout, approve an account or change platform settings | [Authorization](../03-identity-access/authorization.md#admin-permissions) |
-| Order powers | An admin can assign a rider but cannot cancel, complete or reassign an order | Section 8 |
+| Order powers | An admin can assign a rider and, for an in-transit order, work the delivery exceptions (replace the rider after an open SOS, complete manually with proof, fault-cancel with proof). There is still no general cancel, reject or status change | Section 8, [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
 | Refund and payout | Both run with no permission code, and neither has a list of what is waiting | Sections 9 and 10 |
 | Payout creation | No admin route creates a payout | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#payout-lifecycle) |
 | Wallet | `GET /wallets/me` returns a hard-coded id for admins | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#reading-wallets) |
@@ -377,7 +382,7 @@ enforced. See [Analytics](../02-platform/analytics.md#mismatches-and-inconsisten
 | Reads of customers | `GET /customers/:customerId` is effectively admin-only, though vendors, riders and fleet managers are on the route | [Customer Addresses](../03-identity-access/customer-addresses.md#what-reads-these-values) |
 | Product approval | Post-hoc, and reversible by the vendor through the status route | [Products](../05-products/products.md#approval-status-and-deletion) |
 | Account recovery | No unblock route | Section 4 |
-| Realtime | SOS status is broadcast to every socket; support rooms have no ownership check; sockets do not recheck blocked state | [SOS](../02-platform/sos.md#socketio), [Support](../02-platform/support.md#socketio-events) |
+| Realtime | SOS status goes only to the SOS monitoring room and the alert owner; support rooms have no ownership check; sockets do not recheck blocked state | [SOS](../02-platform/sos.md#socketio), [Support](../02-platform/support.md#socketio-events) |
 | Search and notifications | `POST /search/reindex` and `POST /test/send-notification` are open to any admin | [Menus](../05-products/menus.md#search-and-the-meilisearch-index) |
 
 ---
@@ -389,8 +394,9 @@ enforced. See [Analytics](../02-platform/analytics.md#mismatches-and-inconsisten
   any of them.
 - **Permission design.** Whether the nine unenforced codes should gate routes is not stated.
   The unguarded permission-assign route is read from code, and its consequence is **Inferred**.
-- **Order powers.** Whether an admin should be able to cancel, complete or reassign an order is
-  not stated; at HEAD only rider assignment exists.
+- **Order powers.** Whether an admin should also be able to cancel or reject an order outside
+  the in-transit exception cases is not stated; today only rider assignment and the
+  [delivery exception](../03-orders/delivery-exceptions.md) actions exist.
 - **Refund eligibility** after a customer cancels post-acceptance is not stated.
 - **Unblocking.** Whether an admin submitting on a blocked party's behalf is the intended path is
   not stated.

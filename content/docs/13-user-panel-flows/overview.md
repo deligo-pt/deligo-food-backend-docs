@@ -179,8 +179,8 @@ Columns: **C** customer, **V** vendor, **SV** sub-vendor, **DP** delivery partne
 - **A fleet manager has no order-handling route.** It sees orders in the list,
   scoped to its riders, but cannot open one order, and no order notification
   targets it. Its stake in an order is the wallet credit at settlement.
-- **A rider cannot raise `READY_FOR_PICKUP`.** Only the vendor (pickup orders) or
-  the auto-ready cron does.
+- **A rider cannot raise `READY_FOR_PICKUP`.** Only the vendor (optional for a
+  delivery order) or the auto-ready fallback does.
 - **Any admin reaches most back-office routes.** Nine of the fourteen permission
   codes are never checked.
 - **Customers have no onboarding steps beyond the first login**, and no

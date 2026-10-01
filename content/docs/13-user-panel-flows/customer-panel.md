@@ -113,7 +113,7 @@ is on [Order Lifecycle](../03-orders/order-lifecycle.md).
 | `PREPARING` to `ASSIGNED` | Waits. May cancel | Cancel is allowed in every non-terminal status; the assigned rider is told |
 | `READY_FOR_PICKUP` (pickup) | Shows the pickup code to the vendor, who verifies it | The code is sent to the customer by push and email. No attempt limit |
 | `PICKED_UP` (delivery) | Receives the delivery code | By push, email and socket. May still cancel; the vendor is not told |
-| `ON_THE_WAY` | Gives the delivery code to the rider, who submits it | Five failed attempts lock the code, and no committed recovery exists |
+| `ON_THE_WAY` | Gives the delivery code to the rider, who submits it | Five wrong attempts lock the code; an admin can reset it (new code to the customer). The customer may also be asked whether they received the order (`PATCH /orders/:orderId/confirm-receipt`), and a mistaken NO can be corrected to YES until the admin resolves the case. See [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
 | `DELIVERED`, `PICKED_UP_BY_CUSTOMER` | May rate and download the invoice | The invoice works only after it has synced |
 | `REJECTED`, `CANCELED` | Waits for an admin refund where one is owed | Nothing refunds automatically |
 | `NO_SHOW` | None | The order is settled like a completed one |

@@ -36,11 +36,11 @@ relative to the backend's `src/app/` directory.
 
 | Actor | What it can do to status |
 | --- | --- |
-| Vendor / sub-vendor (owning `vendorId`) | Accept, reject (while `PENDING`), cancel (after accepting, before a rider is assigned), mark ready (pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
+| Vendor / sub-vendor (owning `vendorId`) | Accept, reject (while `PENDING`), cancel (after accepting, before a rider is assigned), mark ready (pickup, and delivery before pickup), mark no-show (pickup), verify the pickup code, manually broadcast to riders |
 | Delivery partner | Accept a dispatch offer, then `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, or hand the order back (`REASSIGNMENT_NEEDED`) |
-| Customer | Cancel only (from any non-terminal status) |
-| Admin / super admin | Manually assign a rider to an order awaiting one; no other status changes |
-| System (cron / worker) | Auto-accept, auto-dispatch and retry, dispatch expiry, escalation, auto-ready, auto no-show |
+| Customer | Cancel (from any non-terminal status). Answering a receipt confirmation never changes the status (see [Delivery Exceptions and Verification](./delivery-exceptions.md)) |
+| Admin / super admin | Manually assign a rider to an order awaiting one; for an in-transit order, complete the delivery manually (`DELIVERED`) or cancel it after a delivery fault (`CANCELED`), both with proof and a reason (see [Delivery Exceptions and Verification](./delivery-exceptions.md)) |
+| System (cron / worker) | Auto-accept, auto-dispatch and retry, dispatch expiry, dispatch failure recovery, escalation, auto-ready fallback, auto no-show |
 
 ---
 
@@ -58,7 +58,7 @@ flowchart TD
     A -->|"rider hands order back"| R["REASSIGNMENT_NEEDED"]
     R -->|"retry cron / vendor broadcast"| D
     R -->|"escalation after estimatedReadyAt"| W
-    A -->|"auto-ready cron at estimatedReadyAt"| RP["READY_FOR_PICKUP"]
+    A -->|"vendor marks ready / auto-ready fallback"| RP["READY_FOR_PICKUP"]
     RP -->|"rider picks up (delivery OTP generated)"| PU["PICKED_UP"]
     PU -->|"rider"| OW["ON_THE_WAY"]
     OW -->|"rider enters delivery OTP"| DL["DELIVERED"]
@@ -74,10 +74,27 @@ Points that are easy to miss:
 - **Accepting jumps straight to `PREPARING`.** The accept writes `ACCEPTED` and
   `PREPARING` to the history but persists `PREPARING` (see
   [Statuses that are not part of the normal flow](#statuses-that-are-not-part-of-the-normal-flow)).
-- **`READY_FOR_PICKUP` on a delivery order is set only by the auto-ready cron**,
-  and only from `ASSIGNED`. A rider cannot set it, and a rider can move to
-  `PICKED_UP` only from `READY_FOR_PICKUP`. The vendor's `READY_FOR_PICKUP`
-  action is rejected for delivery orders.
+- **`READY_FOR_PICKUP` stays mandatory before pickup.** A rider cannot set it,
+  and a rider can move to `PICKED_UP` only from `READY_FOR_PICKUP`; there is no
+  `ASSIGNED` to `PICKED_UP` shortcut. Three things can make a delivery order
+  `READY_FOR_PICKUP`:
+  1. **The vendor marks it ready** (optional). Allowed while the order is
+     `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED` or
+     `ASSIGNED`. If a rider is already assigned, the order becomes
+     `READY_FOR_PICKUP` immediately. Otherwise the status does not change and the
+     confirmation is stored in `foodReadyAt`; when a rider is later assigned
+     (accepting an offer, or an admin assignment) the order becomes
+     `READY_FOR_PICKUP` in the same transaction as the assignment.
+  2. **The auto-ready fallback.** If the vendor never confirms, the cron moves an
+     `ASSIGNED` order to `READY_FOR_PICKUP` 5 minutes after `estimatedReadyAt`.
+  3. A vendor confirmation recorded earlier is released by the auto-ready cron as
+     a safety net if the assignment did not already do it.
+
+  Three values are easy to confuse: `estimatedReadyAt` is the **expected**
+  readiness, `foodReadyAt` is the **vendor-confirmed** readiness, and the
+  `READY_FOR_PICKUP` status is the actual state that allows pickup. Marking the
+  order ready does not change dispatch timing; dispatch is driven by
+  `estimatedReadyAt` and the vendor's broadcast as before.
 - **A rider can hand the order back only from `ASSIGNED`.** Once the order is
   `READY_FOR_PICKUP` or later, `REASSIGNMENT_NEEDED` is no longer allowed.
 - Dispatch mechanics (rider search, offer window, pool handling) are outside the
@@ -149,20 +166,26 @@ triggers it.
 | 4b | `ACCEPTED` / `PREPARING` / `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `DISPATCHING` | Vendor `broadcast-order` | Delivery order; vendor `APPROVED` with a session location; pool currently empty | `broadcastOrderToPartners` |
 | 5 | `AWAITING_PARTNER` → `DISPATCHING` | System: retry | `dispatchExpiresAt` passed and `estimatedReadyAt` still in the future | `autoRetryDispatchOrder` |
 | 5b | `REASSIGNMENT_NEEDED` → `DISPATCHING` | System: retry | No rider, empty pool, `estimatedReadyAt` in the future | `autoRetryReassignmentOrder` |
-| 6 | `DISPATCHING` → `ASSIGNED` | Delivery partner `ACCEPT` | Rider `APPROVED`, has no active order, is in the live pool and not previously rejected, window not expired; only one rider wins | `partnerAcceptsDispatchedOrder` |
+| 6 | `DISPATCHING` → `ASSIGNED` | Delivery partner `ACCEPT` | Rider `APPROVED`, has no active order, is in the live pool and not previously rejected, window not expired; only one rider wins. If the order already has `foodReadyAt`, it goes on to `READY_FOR_PICKUP` in the same transaction (row 6b) | `partnerAcceptsDispatchedOrder` |
+| 6b | `DISPATCHING` → `ASSIGNED` → `READY_FOR_PICKUP` | Delivery partner `ACCEPT` | The order has `foodReadyAt` (the vendor confirmed it ready before a rider was assigned). Both history entries are written in the assignment transaction; the second note says the vendor had confirmed | `partnerAcceptsDispatchedOrder` |
 | 7 | `DISPATCHING` → `AWAITING_PARTNER` | Last rider in the pool rejects | Rider was in the pool | `partnerAcceptsDispatchedOrder` |
 | 7b | `DISPATCHING` → `AWAITING_PARTNER` | System: window expired | `dispatchExpiresAt` passed. Done by the cron, or by a rider's late accept or late reject request (the expiry check runs before the action is looked at) | `handleOrderExpiryCron`, `partnerAcceptsDispatchedOrder` |
 | 7c | `DISPATCHING` → `AWAITING_PARTNER` | System: no eligible rider | Dispatch found no rider (manual broadcast then returns `NO_PARTNER_FOUND`); `dispatchExpiresAt` is set to about now + 120 seconds | `dispatchOrderToPartners` |
 | 7d | `DISPATCHING` → `AWAITING_PARTNER` | System: vendor location missing | Auto-dispatch, dispatch retry, or reassignment retry found that the vendor's `businessLocation` has no numeric longitude/latitude, so no rider search ran; `dispatchExpiresAt` is set to about now + 120 seconds. The retry cron can pick the order up again (row 5) until `estimatedReadyAt` passes, after which it is escalated | `autoDispatchOrder`, `autoRetryDispatchOrder`, `autoRetryReassignmentOrder` |
-| 8 | `AWAITING_PARTNER` → `ASSIGNED` | Admin assigns a rider | Delivery order in `AWAITING_PARTNER` without a rider; rider approved, idle and free (checked at write time) | `assignDeliveryPartnerByAdmin` |
+| 7e | `DISPATCHING` → `AWAITING_PARTNER` | System: dispatch failure recovery | The order was claimed into `DISPATCHING` but the geo search or the dispatch write failed unexpectedly, and the pool is still empty. It gets a fresh `dispatchExpiresAt` (about now + 120 seconds) and the history note "Dispatch failed unexpectedly, waiting for partner", so retry and escalation continue. A recovery path, not a successful dispatch; the original error still reaches the caller. Not applied once the pool has been written (the normal expiry handles that case) | `dispatchOrderToPartners` |
+| 8 | `AWAITING_PARTNER` → `ASSIGNED` | Admin assigns a rider | Delivery order in `AWAITING_PARTNER` without a rider; rider approved, idle and free (checked at write time). If the order has `foodReadyAt`, it becomes `READY_FOR_PICKUP` in the same transaction (the response, push and socket event then carry that status) | `assignDeliveryPartnerByAdmin` |
 | 9 | `AWAITING_PARTNER` / `REASSIGNMENT_NEEDED` → `AWAITING_PARTNER` (escalated) | System: escalation | `estimatedReadyAt` passed (or unset) and not already escalated; done once until a rider is assigned (`dispatchEscalatedAt` is set on escalation and reset to `null` when a rider is assigned); automatic dispatch stops | `autoEscalateDispatchOrder` |
 | 10 | `ASSIGNED` → `REASSIGNMENT_NEEDED` | Delivery partner | Rider is the assigned rider; `reason` required; clears the partner and blocks that rider for this order | `updateOrderStatusByDeliveryPartner` |
-| 11 | `ASSIGNED` → `READY_FOR_PICKUP` | System: auto-ready | Delivery order; `estimatedReadyAt` has passed | `autoReadyOrder` |
-| 11b | `PREPARING` → `READY_FOR_PICKUP` | Vendor `READY_FOR_PICKUP` | Pickup order only; current status `PREPARING` | `updateOrderStatusByVendor` |
-| 11c | `PREPARING` → `READY_FOR_PICKUP` | System: auto-ready | Pickup order; `estimatedReadyAt` has passed | `autoReadyOrder` |
+| 11 | `ASSIGNED` → `READY_FOR_PICKUP` | System: auto-ready fallback | Delivery order; the vendor has not confirmed (`foodReadyAt` empty) and `estimatedReadyAt` + 5 minutes has passed. Writes a history note, alerts admins and pushes the assigned rider (see [Order Automation](./order-automation.md#auto-ready-autoreadyorder)) | `autoReadyOrder` |
+| 11a | `ASSIGNED` → `READY_FOR_PICKUP` | Vendor `READY_FOR_PICKUP` | Delivery order with a rider assigned; immediate. Before assignment (`PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED`) the vendor action only stores `foodReadyAt` and the status is unchanged; other statuses are refused (`ORDER_CANNOT_BE_MARKED_READY_AT_STAGE`) | `updateOrderStatusByVendor` |
+| 11b | `PREPARING` → `READY_FOR_PICKUP` | Vendor `READY_FOR_PICKUP` | Pickup order; current status `PREPARING` | `updateOrderStatusByVendor` |
+| 11c | `PREPARING` → `READY_FOR_PICKUP` | System: auto-ready fallback | Pickup order; `estimatedReadyAt` + 5 minutes has passed | `autoReadyOrder` |
+| 11d | `ASSIGNED` → `READY_FOR_PICKUP` | System: auto-ready (safety net) | Delivery order with `foodReadyAt` set that is `ASSIGNED` (normally already released at assignment; no admin alert or rider push) | `autoReadyOrder` |
 | 12 | `READY_FOR_PICKUP` → `PICKED_UP` | Delivery partner | Assigned rider; generates the six-digit delivery OTP | `updateOrderStatusByDeliveryPartner` |
 | 13 | `PICKED_UP` → `ON_THE_WAY` | Delivery partner | Assigned rider | `updateOrderStatusByDeliveryPartner` |
-| 14 | `ON_THE_WAY` → `DELIVERED` | Delivery partner | Assigned rider; correct six-digit OTP; at most five failed attempts. The OTP is validated before the `ON_THE_WAY` status precondition (see "Delivery OTP" below) | `updateOrderStatusByDeliveryPartner` |
+| 14 | `ON_THE_WAY` → `DELIVERED` | Delivery partner | Assigned rider; correct six-digit OTP. A wrong code is refused (`401`) and counted; the fifth wrong code locks the OTP (`403`, a `DELIVERY_OTP_LOCKED` exception opens) until an admin resets it (see "Delivery OTP" below) | `updateOrderStatusByDeliveryPartner` |
+| 14b | `PICKED_UP` / `ON_THE_WAY` → `DELIVERED` | Admin manual completion | Proof (customer confirmed receipt, or a verified delivery OTP with an open exception) and a reason; one settlement job. See [Delivery Exceptions and Verification](./delivery-exceptions.md) | `completeDeliveryManually` |
+| 14c | `PICKED_UP` / `ON_THE_WAY` → `CANCELED` | Admin fault cancel | An open rider SOS, or the customer declined receipt; `refundStatus: PENDING`. See [Delivery Exceptions and Verification](./delivery-exceptions.md) | `faultCancelOrder` |
 | 15 | `READY_FOR_PICKUP` → `PICKED_UP_BY_CUSTOMER` | Vendor verifies the pickup code | Pickup order owned by the vendor, status `READY_FOR_PICKUP`, code matches | `verifyPickupCode` |
 | 16 | `READY_FOR_PICKUP` → `NO_SHOW` | Vendor `NO_SHOW` | Pickup order; current status `READY_FOR_PICKUP`; at least 15 minutes past the later of the promised pickup time and the ready time | `updateOrderStatusByVendor` |
 | 16b | `READY_FOR_PICKUP` → `NO_SHOW` | System | Same grace has elapsed, or the vendor's closing time has passed | `autoMarkOrderNoShow` |
@@ -297,7 +320,10 @@ vendor may get a transient error instead of the result and can simply retry.
 | `VENDOR`, `SUB_VENDOR` | `PATCH /orders/:orderId/broadcast-order` | → `DISPATCHING` | `auth('VENDOR','SUB_VENDOR')`; owns the order; `APPROVED`; delivery orders only |
 | `DELIVERY_PARTNER` | `PATCH /orders/:orderId/accept-dispatch-order` | `DISPATCHING` → `ASSIGNED` (accept) or rejection | `auth('DELIVERY_PARTNER')`; `APPROVED`; must be in the live pool |
 | `DELIVERY_PARTNER` | `PATCH /orders/:orderId/update-order-status` | `PICKED_UP`, `ON_THE_WAY`, `DELIVERED`, `REASSIGNMENT_NEEDED` | `auth('DELIVERY_PARTNER')`; `deliveryPartnerId` must be the caller |
-| `ADMIN`, `SUPER_ADMIN` | `PATCH /orders/:orderId/assign-partner` | `AWAITING_PARTNER` → `ASSIGNED` | `auth('ADMIN','SUPER_ADMIN',['CAN_MANAGE_ORDERS'])`; the permission is enforced only for `ADMIN` |
+| `ADMIN`, `SUPER_ADMIN` | `PATCH /orders/:orderId/assign-partner` | `AWAITING_PARTNER` → `ASSIGNED` (or `READY_FOR_PICKUP` when `foodReadyAt` is set) | `auth('ADMIN','SUPER_ADMIN',['CAN_MANAGE_ORDERS'])`; the permission is enforced only for `ADMIN` |
+| `DELIVERY_PARTNER` | `POST /orders/:orderId/sos`, `POST /orders/:orderId/delivery-verification-issue` | None (recorded on the order) | `auth('DELIVERY_PARTNER')`; the order's own rider. See [Delivery Exceptions and Verification](./delivery-exceptions.md) |
+| `CUSTOMER` | `PATCH /orders/:orderId/confirm-receipt` | None | `auth('CUSTOMER')`; own order, `PICKED_UP` / `ON_THE_WAY` only |
+| `ADMIN`, `SUPER_ADMIN` | `GET /orders/delivery-exceptions`, `.../delivery-exception/acknowledge`, `.../delivery-exception/resolve`, `.../delivery-otp/reset`, `.../replace-partner`, `.../request-receipt-confirmation`, `.../complete-delivery`, `.../fault-cancel` | `complete-delivery` → `DELIVERED`, `fault-cancel` → `CANCELED`; the others none | Same `auth` as `assign-partner`. See [Delivery Exceptions and Verification](./delivery-exceptions.md) |
 | `FLEET_MANAGER` | none | Read-only: sees the orders of its managed riders in the order list | — |
 
 Additional notes:
@@ -329,7 +355,7 @@ runs the order steps in the order listed.
 | every minute | `handleAutoRetryDispatchCron` | escalation, then `AWAITING_PARTNER` → `DISPATCHING`, then `REASSIGNMENT_NEEDED` → `DISPATCHING` | Retry only while `estimatedReadyAt` is in the future; after it, the order is escalated (once until a rider is assigned, row 9) and stays `AWAITING_PARTNER` |
 | every minute | `handleAutoAcceptCron` | `PENDING` → `PREPARING` | `autoAcceptDeadlineAt` passed |
 | every minute | `handleAutoDispatchCron` | `PREPARING` → `DISPATCHING` | Delivery order, `estimatedReadyAt` within `autoDispatchLeadMinutes` |
-| every minute | `handleAutoReadyCron` | `ASSIGNED` → `READY_FOR_PICKUP` (delivery), `PREPARING` → `READY_FOR_PICKUP` (pickup) | `estimatedReadyAt` passed |
+| every minute | `handleAutoReadyCron` | `ASSIGNED` → `READY_FOR_PICKUP` (delivery), `PREPARING` → `READY_FOR_PICKUP` (pickup) | The vendor has not confirmed and `estimatedReadyAt` + 5 minutes has passed (a vendor-confirmed `ASSIGNED` delivery order is released at once) |
 | every 5 minutes | `handleAutoNoShowCron` | `READY_FOR_PICKUP` → `NO_SHOW` | Pickup order past the 15-minute grace, or past the vendor's closing time (for `RESTAURANT` vendors the current day's closing; otherwise the closing time on the scheduled pickup day) |
 
 The two timing values come from the global settings, and both `autoAcceptDeadlineAt`
@@ -384,13 +410,14 @@ side of settlement in
   the gateway refund itself; an admin does (see
   [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md#refunds)).
 - **Delivery OTP.** Generated when the rider sets `PICKED_UP` and sent to the
-  customer. `DELIVERED` requires it; a wrong code increments `attempts`, and at
-  five failed attempts further attempts are refused (`403`). No code path that
-  resets the counter was found. The OTP is validated *before* the
-  `ON_THE_WAY` status precondition is checked, so a wrong code sent while the
-  order is in the wrong status (for example `PICKED_UP`) still increments
-  `attempts`, and a correct code sent in the wrong status is rejected by the
-  status check without completing the delivery.
+  customer. `DELIVERED` requires it. The code, the attempt limit and the absence
+  of a lock are checked in the same atomic update that completes the delivery. A
+  wrong code (sent while the order is `ON_THE_WAY`) is refused with `401` and
+  counted; the fifth wrong code returns `403` and locks the OTP, opening a
+  `DELIVERY_OTP_LOCKED` exception for the admins. An admin resets the OTP (new
+  code to the customer, attempts back to 0, the same rider continues). The lock,
+  the reset and the other recovery paths are described in
+  [Delivery Exceptions and Verification](./delivery-exceptions.md).
 - **Pickup code.** Generated when the order is created. The vendor's
   `verify-pickup` must supply it; a wrong code is refused (`401`). There is no
   attempt limit.
@@ -413,7 +440,13 @@ side of settlement in
   adding one; otherwise it appends. Every `findOneAndUpdate` path (dispatch,
   retry, escalation, rider accept and last-rider reject, admin assign, rider status
   updates, pickup verification, auto-ready, auto no-show) `$push`es a new entry
-  unconditionally and never merges.
+  unconditionally and never merges. A dispatch can therefore leave two
+  consecutive `DISPATCHING` entries: the claim step records why the order
+  entered `DISPATCHING` (for example "Manual broadcast: re-broadcasting…" or
+  "Auto-dispatch triggered…"), and the partner-broadcast step then records the
+  result ("Broadcasted to N nearby delivery partners"). They are separate steps of
+  one dispatch, not a duplicate transition; the status, pool and
+  `dispatchExpiresAt` are each written once.
 - **Real-time updates.** Most transition paths emit the Socket.IO
   `ORDER_STATUS_UPDATED` event. The dispatch-expiry cron is an exception; it
   emits `ORDER_DISPATCH_EXPIRED` to the vendor. All events are listed in
@@ -454,9 +487,10 @@ side of settlement in
   list of blocked statuses (the five terminal ones), and vendor cancellation uses
   an allow-list (`VENDOR_CANCELABLE_STATUSES`).
 - The comment on `CANCELED` in `order.constant.ts` reads "canceled
-  (vendor/customer/admin)". `CANCELED` is set by `cancelOrderByCustomer` and by
-  the vendor `CANCELED` action in `updateOrderStatusByVendor`; there is no admin
-  cancellation path, so "admin" in that comment is still inaccurate. A vendor
+  (vendor/customer/admin)". `CANCELED` is set by `cancelOrderByCustomer`, by the
+  vendor `CANCELED` action in `updateOrderStatusByVendor`, and by the admin fault
+  cancellation of an in-transit order (`faultCancelOrder`, see
+  [Delivery Exceptions and Verification](./delivery-exceptions.md)). A vendor
   rejection ends in `REJECTED`.
 - Vendor cancellation is inconsistent with vendor rejection: both set
   `refundStatus: PENDING` (an admin must refund), but rejection notifies the
@@ -467,7 +501,8 @@ side of settlement in
   `ORDER_MUST_BE_READY_FOR_PICKUP_BEFORE_NO_SHOW` when the order is not
   `READY_FOR_PICKUP`.
 - The rider status endpoint accepts `PICKED_UP` only from `READY_FOR_PICKUP`,
-  so a delivery order cannot be picked up before the auto-ready cron has run
+  so a delivery order cannot be picked up until the vendor has confirmed it ready
+  (immediately, or at assignment) or the auto-ready fallback has run 5 minutes
   after `estimatedReadyAt`.
 
 ---
@@ -481,6 +516,9 @@ side of settlement in
   offers, accept/reject, retry, escalation and admin assignment.
 - [Order Automation](./order-automation.md) — the cron jobs, settings and timing
   fields behind the automatic transitions.
+- [Delivery Exceptions and Verification](./delivery-exceptions.md) — rider SOS,
+  the delivery OTP lock and reset, the delivery verification issue and customer
+  receipt confirmation, manual completion and fault cancellation.
 - [Order Tracking and Realtime](./order-tracking-and-realtime.md) — order reads
   per role, socket events and rider live location.
 - [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md)

@@ -109,9 +109,11 @@ flowchart TD
 
 Rules that shape the rider's role:
 
-- **The rider cannot mark an order ready.** `READY_FOR_PICKUP` is set only by the auto-ready
-  cron, from `ASSIGNED`. `PICKED_UP` is accepted only from it, so a rider that arrives
-  early waits for the cron, which runs after `estimatedReadyAt`.
+- **The rider cannot mark an order ready.** `READY_FOR_PICKUP` is set by the vendor
+  (immediately when the rider is assigned, or at assignment if the vendor confirmed
+  earlier) or by the auto-ready fallback 5 minutes after `estimatedReadyAt`.
+  `PICKED_UP` is accepted only from it, so a rider that arrives early waits for the
+  vendor's confirmation or the fallback.
 - **One order at a time.** A rider with `currentOrderId` cannot accept another. The
   `capacity` setting has no effect.
 - **The delivery code has five attempts.** After five wrong attempts further attempts are
@@ -158,8 +160,10 @@ A rider has no refund or collection duty: customers pay the gateway, not the rid
 | Socket, location | The rider publishes with `delivery-location-update`; accuracy above 100 or bad coordinates are dropped silently; the database position is saved at most every 5 seconds | [Order Tracking and Realtime](../03-orders/order-tracking-and-realtime.md#rider-live-location) |
 
 Offers are delivered **only by push**; there is no socket offer event. The rider gets
-**no push** when an order is marked ready or when another rider wins an offer, and no push
-when it hands an order back or completes one.
+**no push** when the vendor marks an order ready or when another rider wins an offer, and no
+push when it hands an order back or completes one. The one ready-related push is
+`ORDER_AUTO_READY_TO_PARTNER`, sent when the auto-ready fallback marks the rider's
+order `READY_FOR_PICKUP`.
 Some `REMOVE_ORDER_POPUP` events go to rooms nobody joins, and a customer cancellation
 emits none, so an offer can stay visible to the rider until it acts.
 
@@ -170,11 +174,13 @@ emits none, so an offer can stay visible to the rider until it acts.
 | Topic | Behavior |
 | --- | --- |
 | Support | Allowed over REST and the socket. One open ticket; a referenced order must be the rider's own. The rider can list tickets, read messages and mark them read, and cannot close over REST |
-| Raise an SOS | Yes (`POST /sos/trigger`). The location comes from the rider's **stored** session location, so it is whatever was last saved, and the trigger fails without one |
-| After raising | Admins and fleet managers in the monitoring room receive `new-sos-alert`. Over REST a fleet manager lists only its own riders' alerts, but a fleet manager in the monitoring room receives every alert |
+| Raise an SOS | Yes. On an order, `POST /orders/:orderId/sos` (or `POST /sos/trigger` with an `orderId`), for the rider's own order only; a fresh location can be sent. Without an order, `POST /sos/trigger` takes the **stored** session location, and fails without one |
+| After raising | Admins and fleet managers in the monitoring room receive `new-sos-alert`. Over REST a fleet manager lists only its own riders' alerts, but a fleet manager in the monitoring room receives every alert. For a rider SOS on an order, `ADMIN` and `SUPER_ADMIN` are also pushed |
+| Order effect | Before pickup the alert is recorded and admins are alerted, but the order is not held. While `PICKED_UP` / `ON_THE_WAY` it also opens a `RIDER_SOS` exception that an admin acknowledges, resolves or answers with a rider replacement. An SOS never cancels an order by itself, and the customer is not told about it |
 | Listing its own alerts | **Not possible.** `GET /sos` does not list riders, and `GET /sos/:id` is for admins and fleet managers. A rider cannot read back an alert it raised |
 
-SOS sends no push, email or notification record. Owning pages:
+A plain SOS (no order) is socket-only. A rider SOS on an order pushes the admins, and the rider later gets a push when an admin acknowledges it, resolves it or replaces the rider; there is no email. Owning pages:
+[Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#rider-sos),
 [Support](../02-platform/support.md#who-can-do-what), [SOS](../02-platform/sos.md#triggering).
 
 ---
@@ -218,8 +224,8 @@ See [Delivery Dispatch](../03-orders/delivery-dispatch.md#known-implementation-n
   [Order Tracking and Realtime](../03-orders/order-tracking-and-realtime.md#rider-live-location).
 - The socket connection checks only the token signature, so a blocked rider's open socket is
   not re-checked.
-- SOS's `sos-location-stream` accepts any connected socket. See
-  [SOS](../02-platform/sos.md#socketio).
+- SOS's `sos-location-stream` only accepts a live alert owned by the connected socket's user.
+  See [SOS](../02-platform/sos.md#socketio).
 
 ---
 
@@ -234,7 +240,7 @@ See [Delivery Dispatch](../03-orders/delivery-dispatch.md#known-implementation-n
 - **Payouts for managed riders.** With the request route failing and the automatic run
   skipping them, the code has no working way to create a payout for a managed rider.
 - **Wallet of a managed rider.** What it holds after the link is **Inferred**.
-- **Code lock.** No committed recovery for a delivery code that reached five failed attempts.
+- **Code lock.** A delivery code locked after five wrong attempts is recovered by an admin OTP reset, and a rider can raise an order SOS or report a verification issue; see [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md).
 - **Readback of SOS.** Whether a rider should see its own alerts is not stated.
 
 ---

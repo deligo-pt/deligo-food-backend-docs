@@ -56,6 +56,14 @@ the error for every status are in
 - The customer is not notified by push or email. **Inferred:** the customer only
   learns of it through the `ORDER_STATUS_UPDATED` event or by reading the order.
 
+**Admin fault cancel (in-transit orders).** A separate admin path ends a
+`PICKED_UP` / `ON_THE_WAY` order as `CANCELED` when the delivery failed: an open
+rider SOS, or the customer saying they did not receive the order. It sets
+`refundStatus: PENDING` (a full refund is owed), does **not** restore stock (the
+goods left the vendor), runs no vendor, fleet or platform settlement, releases the
+rider and notifies the customer. The refund then goes through the admin refund
+route below. See [Delivery Exceptions and Verification](./delivery-exceptions.md#fault-cancellation).
+
 ### Stock restoration
 
 Stock is **deducted at acceptance**, only for vendors that are not `RESTAURANT`
@@ -89,7 +97,7 @@ cancel, reject or refund.
 
 Nothing refunds automatically. Cancel and reject only set `Order.refundStatus`
 (`REFUND_STATUS`: `NOT_APPLICABLE`, `PENDING`, `REFUNDED`, `FAILED`); the money
-moves only when an admin calls:
+moves only when an admin calls (this includes an admin fault cancel, which also only sets `refundStatus: PENDING`):
 
 `POST /api/v1/payment/reduniq/refund/:orderId` (`auth('ADMIN', 'SUPER_ADMIN')`,
 no permission action, so any `ADMIN` can call it) → `refundRedUniqPayment`.
@@ -143,7 +151,7 @@ concurrency 5) in `processOrderPostUpdate` (`order.worker.ts`).
 
 | Trigger (job `PROCESS_ORDER_POST_UPDATE`) | Enqueued by |
 | --- | --- |
-| `DELIVERED` | Rider status update |
+| `DELIVERED` | Rider status update, or an admin's manual completion (needs the customer's confirmed receipt or a verified OTP; see [Delivery Exceptions and Verification](./delivery-exceptions.md#manual-completion)) |
 | `PICKED_UP_BY_CUSTOMER` | Vendor pickup-code verification |
 | `NO_SHOW` | Vendor `NO_SHOW` action or the no-show cron |
 

@@ -139,12 +139,12 @@ Points worth knowing:
 | 11b | Delivery partner, or the clock | Rejects, or the window expires | `REJECT`, or the expiry cron | `AWAITING_PARTNER`; the cron retries while `estimatedReadyAt` is ahead | Socket `ORDER_DISPATCH_EXPIRED` to the vendor on expiry | [Order Lifecycle](../03-orders/order-lifecycle.md#status-transition-rules) |
 | 11c | Delivery partner | Hands an assigned order back (reason required) | `update-order-status` with `REASSIGNMENT_NEEDED`, only from `ASSIGNED` | `ASSIGNED` → `REASSIGNMENT_NEEDED`; the rider is barred from this order | **No push** to the vendor or an admin | [Delivery Dispatch](../03-orders/delivery-dispatch.md#after-assignment) |
 | 12 | Admin | Assigns a rider after escalation | `GET /orders/:orderId/nearby-partners`, `PATCH /orders/:orderId/assign-partner` (`CAN_MANAGE_ORDERS`) | `AWAITING_PARTNER` → `ASSIGNED` | Admins are pushed `ORDER_DISPATCH_ESCALATED_TO_ADMIN` once at escalation; the rider and vendor are pushed on assignment | [Delivery Dispatch](../03-orders/delivery-dispatch.md#admin-tools) |
-| 13 | System | Marks a delivery order ready | Auto-ready cron once `estimatedReadyAt` passes, only from `ASSIGNED` | `ASSIGNED` → `READY_FOR_PICKUP` | Socket `ORDER_STATUS_UPDATED`. **No push** for a delivery order | [Order Automation](../03-orders/order-automation.md#auto-ready-autoreadyorder) |
+| 13 | Vendor, or the clock | Marks a delivery order ready | The vendor's `READY_FOR_PICKUP` (optional; at once when a rider is assigned, otherwise `foodReadyAt` is stored and the order is released when a rider is assigned), or the auto-ready fallback 5 minutes after `estimatedReadyAt` | `ASSIGNED` → `READY_FOR_PICKUP` | Socket `ORDER_STATUS_UPDATED`. The fallback also pushes the admins and the assigned rider; a vendor's manual ready sends no rider push | [Order Automation](../03-orders/order-automation.md#auto-ready-autoreadyorder) |
 
-- **A rider cannot mark an order ready, and neither can the vendor for a delivery
-  order.** Only the cron sets `READY_FOR_PICKUP`, and the rider can move to `PICKED_UP`
-  only from it. So a rider cannot collect the food before the cron has run after
-  `estimatedReadyAt`.
+- **A rider cannot mark an order ready.** The vendor can (optionally), or the
+  auto-ready fallback does it 5 minutes after `estimatedReadyAt`, and the rider can
+  move to `PICKED_UP` only from `READY_FOR_PICKUP`. So a rider cannot collect the food
+  before the vendor confirmed it or the fallback ran.
 - **Escalation is once per order, and automatic dispatch stops after it.** From then on
   only the vendor's manual broadcast or an admin can move the order. The vendor can
   broadcast again.
@@ -166,9 +166,11 @@ Points worth knowing:
 
 - **The customer reads the code from the order.** `GET /orders/:orderId` returns
   `deliveryOtp.code` to the customer only.
-- **The code has five attempts.** After five wrong attempts further attempts are
-  refused, and **no code path that resets the counter was found** in the committed
-  code, so no recovery from a locked code is documented.
+- **The code has five attempts.** The fifth wrong attempt locks the code and alerts
+  the admins. An admin OTP reset (new code to the customer, the same rider continues)
+  recovers it; a rider can also report a verification issue, and the customer can be
+  asked to confirm receipt. See
+  [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md).
 - **Tracking has no ownership check.** Any authenticated customer, vendor, branch,
   rider or admin can join an order's tracking room, and a rider can publish positions
   to any order room. See the caveats on
@@ -273,11 +275,9 @@ own `user_<id>` room. Support and SOS are separate from the order state machine;
 
 - **Client-side behavior.** Which application opens the gateway page, shows the code,
   polls or listens for status changes, or lists offers is not defined by the backend.
-- **Delivery order readiness.** Only a cron sets `READY_FOR_PICKUP` on a delivery order.
-  Whether the vendor should be able to mark it ready, and whether a rider waiting for
-  the cron is intended, is not stated.
-- **Delivery code lock.** No committed recovery exists for a code that has reached five
-  failed attempts.
+- **Delivery order readiness.** The vendor may confirm a delivery order ready; when it
+  does not, the auto-ready fallback applies after a 5-minute grace period. Whether a
+  rider should be compensated for waiting is not stated.
 - **Silent branches.** Vendor cancellation, rider hand-back and no-show notify no one.
   Whether that is intended is not stated.
 - **Refund eligibility.** The code does not say what should happen to a customer who

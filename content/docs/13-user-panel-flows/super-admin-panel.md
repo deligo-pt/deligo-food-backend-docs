@@ -194,7 +194,7 @@ coordinates, and the super admin seed creates none, so a freshly seeded super ad
 | --- | --- | --- |
 | Agreement visibility | Only a super admin has a full view of agreements. An admin sees, reads, edits and signs only rows it created, so rows created by a party or by the auth gate are outside a non-super admin's view | [Agreements](../07-agreements/agreements.md#endpoints-and-who-may-call-them) |
 | Activity logs | An `ADMIN` needs `CAN_MANAGE_ACTIVITY_LOGS`; a super admin does not | [Activity Logs](../12-activity-logs/activity-logs.md#reading-the-log) |
-| Order intervention | An `ADMIN` needs `CAN_MANAGE_ORDERS` for `nearby-partners`, `assign-partner` and the delivery-exception routes added in the latest backend commit. Escalation pushes reach both roles. The order and SOS technical pages do not describe those newer routes yet | [Delivery Dispatch](../03-orders/delivery-dispatch.md#admin-tools) |
+| Order intervention | An `ADMIN` needs `CAN_MANAGE_ORDERS` for `nearby-partners`, `assign-partner` and the delivery-exception routes. Escalation pushes reach both roles, and an `ADMIN`'s manual delivery completion also notifies every `SUPER_ADMIN` | [Delivery Dispatch](../03-orders/delivery-dispatch.md#admin-tools), [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
 | Wallet | `GET /wallets/me` returns the **hard-coded** wallet id for both admin roles, not the caller's. The settlement worker credits the platform wallet of the super admin it finds by role, so the two match only if that account's `_id` equals the hard-coded value | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#reading-wallets) |
 | Payouts | Automatic payouts are created only if a super admin exists, because the sender is that account (**Executed:** without one the create fails). Finalizing an automatic payout debits the super admin's wallet | [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#automatic-payouts) |
 | Status changes targeting it | `approved-rejected-user` has no guard on the target's role. Only soft and permanent delete refuse a super admin. **Inferred:** an `ADMIN` could block a super admin, after which `auth()` would refuse every request from it. Not run | [User Lifecycle](../03-identity-access/user-lifecycle.md#approval-rejection-and-blocking) |
@@ -220,7 +220,7 @@ coordinates, and the super admin seed creates none, so a freshly seeded super ad
 - **No second super admin.** The code has no route to create one, and what happens if the seeded
   account is lost is not described.
 - **SOS.** Whether either admin role should raise alerts is not stated.
-- **Newer order and SOS routes.** The latest backend commit adds delivery-exception admin routes and changes SOS sockets. They are permission-gated like the other order routes, but their behavior is not documented on the technical pages yet, so this page does not describe it.
+- **Newer SOS routes.** The delivery-exception routes are documented in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md), and the SOS socket and notification behavior in [SOS](../02-platform/sos.md).
 - **Agreement view.** Whether the per-creator filter for admins is intended is not stated.
 - **Client behavior.** How a client distinguishes the super admin from an admin is not defined by
   the backend.

@@ -223,7 +223,7 @@ Behavior: one cursor per audience role, each processed in a `setImmediate` callb
 | --- | --- | --- |
 | `ORDER_STATUS_UPDATED` and other order events | `user_<userId>` rooms of customer, vendor and rider | Order progress; see [Order Tracking and Realtime](../03-orders/order-tracking-and-realtime.md). |
 | `incoming-notification` | `admin-notifications-room` (joined by `ADMIN` / `SUPER_ADMIN` on connect) | A non-admin sent a support message. Payload: `ticketId`, `senderName`, `messagePreview`, `time`. |
-| `new-sos-alert` | `SOS_ALERTS_POOL` | SOS triggered (`modules/Sos/sos.service.ts`). No push or record is sent for SOS. See [SOS](../02-platform/sos.md). |
+| `new-sos-alert` | `SOS_ALERTS_POOL` | SOS triggered (`modules/Sos/sos.service.ts`). A plain SOS sends no push or record; a rider SOS on an order also pushes `ADMIN` / `SUPER_ADMIN` with a stored record. See [SOS](../02-platform/sos.md#notifications-and-realtime-events). |
 
 Despite its name, `incoming-notification` is a chat alert, not a `Notification` document.
 
@@ -265,7 +265,7 @@ Despite its name, `incoming-notification` is a chat alert, not a `Notification` 
 5. **Logged-out devices keep receiving pushes**, and tokens are not removed on logout.
 6. **`401` rather than `403`** when marking another user's notification as read, unlike permanent deletion (`403`).
 7. **Templates that are never sent and types that have no sender** are listed on the [triggers page](./notification-triggers.md#templates-and-types-that-exist-but-are-not-used).
-8. **Support and SOS "notifications"** are socket alerts only; nothing reaches an admin who is not connected.
+8. **Support and plain SOS "notifications"** are socket alerts only; nothing reaches an admin who is not connected. A rider SOS on an order is also pushed to admins.
 9. **Vendor cancellation of an accepted order** sends nothing to the customer (see the [triggers page](./notification-triggers.md#events-that-do-not-notify)).
 
 ---

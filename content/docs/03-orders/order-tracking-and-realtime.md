@@ -110,6 +110,8 @@ and [SOS](../02-platform/sos.md).
 | --- | --- | --- | --- |
 | `ORDER_STATUS_UPDATED` | `order_<orderId>` and the `user_<userId>` rooms of the customer, vendor and rider that the calling code knows | After nearly every status change (vendor actions, customer cancel, rider accept and status updates, admin assign, dispatch, retry, escalation, pickup verification, auto-accept, auto-ready, auto no-show). **Not** after the dispatch-expiry cron | `{ orderId, orderStatus, order, timestamp }` |
 | `DELIVERY_OTP_GENERATED` | `user_<customer>` | Rider sets `PICKED_UP` | `{ orderId, otp, generatedAt }` |
+| `DELIVERY_EXCEPTION_UPDATED` | `DELIVERY_EXCEPTION_ADMINS` (admins that joined `join-sos-monitoring`) | A rider SOS, OTP lock, verification report, receipt request or answer, replacement, manual completion or fault cancel on an order | `{ orderId, orderStatus, event, exceptionType?, exceptionStatus?, timestamp }` (status only, no names, notes or codes); see [Delivery Exceptions and Verification](./delivery-exceptions.md) |
+| `DELIVERY_RECEIPT_CONFIRMATION_REQUESTED` | `user_<customer>` | An admin asks the customer to confirm receipt | `{ orderId, timestamp }` |
 | `ORDER_ACCEPTED_BY_PARTNER` | `user_<vendor>` | Rider accepts an offer, or an admin assigns a rider | `{ orderId, partnerName }` |
 | `REMOVE_ORDER_POPUP` | `user_<rider>` and `partner_pool_<poolId>` | A rider answers or hits an expired offer; the expiry cron | `{ orderId }` |
 | `ORDER_DISPATCH_EXPIRED` | `user_<vendor>` | The offer window expired (cron) | `{ orderId, message }` |

@@ -28,7 +28,7 @@ jobs are in `cron/order.cron.ts` and the per-order work in
 | Every minute, step 3 | `handleAutoRetryDispatchCron` | Escalate, then retry `AWAITING_PARTNER`, then retry `REASSIGNMENT_NEEDED` |
 | Every minute, step 4 | `handleAutoAcceptCron` | `PENDING → PREPARING` when the vendor did not answer |
 | Every minute, step 5 | `handleAutoDispatchCron` | `PREPARING → DISPATCHING` for delivery orders close to ready |
-| Every minute, step 6 | `handleAutoReadyCron` | `ASSIGNED → READY_FOR_PICKUP` (delivery) and `PREPARING → READY_FOR_PICKUP` (pickup) |
+| Every minute, step 6 | `handleAutoReadyCron` | `ASSIGNED → READY_FOR_PICKUP` (delivery) and `PREPARING → READY_FOR_PICKUP` (pickup), as a fallback when the vendor has not confirmed readiness |
 | Every 5 minutes | `handlePickupTimeReminderCron` | Reminder push to the customer before a pickup slot |
 | Every 5 minutes | `handleAutoNoShowCron` | `READY_FOR_PICKUP → NO_SHOW` for pickup orders |
 
@@ -65,6 +65,9 @@ The order-related global settings live in the `order` group of the
 | `order.autoDispatchLeadMinutes` | How far ahead of `estimatedReadyAt` auto-dispatch starts | **10** |
 | `order.nearestVendorRadiusKm` | Customer vendor/product discovery radius (not an order timer) | 0 |
 | `order.cancelTimeLimitMinutes` | **Not read by any code** (only the model, interface and validation mention it) | 0 |
+
+The auto-ready grace period is **not** a setting: it is the constant
+`AUTO_READY_GRACE_PERIOD_MINUTES` (5) in `order.constant.ts`.
 
 ### Timeout defaults: schema, fallbacks and precedence
 
@@ -124,7 +127,8 @@ The fixed values are constants: the 15-minute no-show grace
 | `autoAcceptDeadlineAt` | Order creation: now + `autoAcceptTimeoutMinutes` | Auto-accept |
 | `vendorRespondedAt` | Manual accept, and manual reject from `PENDING` | Informational; no job reads it |
 | `preparationTime` | Default `0`. Manual accept: the vendor's `preparationTime` (≥ 1 minute). Any accept then stores the minutes actually used (so an auto-accept stores the vendor default) | Input to `estimatedReadyAt` |
-| `estimatedReadyAt` | Accept (manual or automatic): now + preparation minutes | Auto-dispatch, retry, escalation, auto-ready |
+| `estimatedReadyAt` | Accept (manual or automatic): now + preparation minutes. The **expected** readiness | Auto-dispatch, retry, escalation, auto-ready fallback |
+| `foodReadyAt` | A vendor marks a delivery order ready (the **vendor-confirmed** readiness); stays empty if the vendor never confirms | Releases the order to `READY_FOR_PICKUP` when a rider is assigned; tells the auto-ready cron not to use the fallback |
 | `dispatchExpiresAt` | Every offer, and every `AWAITING_PARTNER` entry: now + 120 s | Expiry cron, retry |
 | `dispatchEscalatedAt` | Escalation; reset to `null` when a rider is assigned | Escalation latch |
 | `pickup.pickupTime` | Order creation (the customer's slot) | No-show, reminder |
@@ -185,14 +189,39 @@ in `PREPARING` with no rider and an empty pool and `estimatedReadyAt` is within
 the lead time. Retry and escalation depend on whether `estimatedReadyAt` is still
 in the future.
 
+If the geo search or the dispatch write fails unexpectedly after an order was
+claimed into `DISPATCHING`, `dispatchOrderToPartners` moves it back to
+`AWAITING_PARTNER` with a fresh `dispatchExpiresAt` (about 120 seconds ahead) and
+rethrows the error, so the retry and escalation steps above pick it up instead of
+leaving it in `DISPATCHING` with an empty pool and no expiry. This is a recovery
+path, not a successful dispatch. It applies only while the pool is still empty; if
+the failure happens after the pool and expiry were written, the order stays
+`DISPATCHING` and the normal expiry step handles it.
+
 ### Auto-ready (`autoReadyOrder`)
 
-Orders whose `estimatedReadyAt` has passed and that are either `ASSIGNED`
-(delivery) or `PREPARING` **pickup** become `READY_FOR_PICKUP`. For a pickup order
-this also sets `pickup.readyAt` and notifies the customer with the pickup code.
-A delivery order that has no rider yet is **not** touched: it can only reach
-`READY_FOR_PICKUP` after a rider is assigned, so a rider assigned after
-`estimatedReadyAt` sees the order become ready on the next tick.
+`READY_FOR_PICKUP` is the status that allows pickup, and the vendor can confirm
+it. `estimatedReadyAt` is only the expected time; the cron is the fallback when the
+vendor says nothing. The job claims an order in one of two ways, each with a
+conditional update so only one run changes it:
+
+| Trigger | Orders | Effect |
+| --- | --- | --- |
+| **Fallback** (vendor never confirmed: `foodReadyAt` empty) | `ASSIGNED` delivery orders, and `PREPARING` **pickup** orders, whose `estimatedReadyAt` is at least `AUTO_READY_GRACE_PERIOD_MINUTES` (5) in the past | Becomes `READY_FOR_PICKUP` with the history note "Auto-marked ready: the vendor did not confirm within 5 minutes of estimatedReadyAt". The run that wins the update alerts every `ADMIN` / `SUPER_ADMIN` once (`ORDER_AUTO_READY_FALLBACK_TO_ADMIN`) and, for a delivery order, pushes the assigned rider (`ORDER_AUTO_READY_TO_PARTNER`) |
+| **Vendor-confirmed** (`foodReadyAt` set) | `ASSIGNED` delivery orders | Becomes `READY_FOR_PICKUP` with the note "the vendor had confirmed the food ready and a rider is now assigned". No admin alert and no rider push. Normally the order was already released when the rider was assigned, so this is a safety net |
+
+- A **delivery order with no rider** is never touched by this job; it can only
+  become ready after a rider is assigned. When a rider is assigned to an order that
+  already has `foodReadyAt` (a rider accepting an offer, or an admin assigning a
+  rider), the assignment itself releases it to `READY_FOR_PICKUP` in the same
+  transaction, so the rider's `PICKED_UP` works straight away.
+- A vendor that marks a delivery order ready while a rider is already assigned
+  gets the status change immediately, without waiting for this job. The vendor's
+  manual action does **not** send the rider push above.
+- For a pickup order the fallback also sets `pickup.readyAt` and notifies the
+  customer with the pickup code (as the vendor action does).
+- Marking an order ready does not change dispatch timing: auto-dispatch, retry and
+  escalation still follow `estimatedReadyAt` and the vendor's broadcast.
 
 ### No-show (`handleAutoNoShowCron`, `autoMarkOrderNoShow`)
 
@@ -273,6 +302,7 @@ extension minutes from global settings and related services"). The vendor's
 
 - [Order Lifecycle](./order-lifecycle.md): transitions, conditions and history semantics.
 - [Delivery Dispatch and Riders](./delivery-dispatch.md): the dispatch, retry and escalation mechanics.
+- [Delivery Exceptions and Verification](./delivery-exceptions.md): what happens to an in-transit order when the hand-over cannot finish.
 - [Checkout and Order Creation](./checkout-and-order-creation.md): where `autoAcceptDeadlineAt` is set.
 - [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md): what `NO_SHOW` and cancellations do to stock and money.
 - [Vendors and Branches](../04-vendors/vendors-and-branches.md): store schedule, timezone and the vendor default preparation time.

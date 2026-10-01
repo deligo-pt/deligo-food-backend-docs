@@ -136,15 +136,22 @@ on its branches' orders.
 | `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER` or `REASSIGNMENT_NEEDED` | Cancel with a reason | Same, `CANCELED` | `CANCELED`; `refundStatus: PENDING`; **no one is told** |
 | `PREPARING`, `AWAITING_PARTNER` or `REASSIGNMENT_NEEDED` (delivery) | Broadcast to riders now | `PATCH /orders/:orderId/broadcast-order` | `DISPATCHING`, searched around the vendor's session location; otherwise the auto-dispatch cron does it |
 | `PREPARING` (pickup) | Mark ready | `status` with `READY_FOR_PICKUP` | Customer receives the pickup code |
+| `PREPARING`, `DISPATCHING`, `AWAITING_PARTNER`, `REASSIGNMENT_NEEDED` or `ASSIGNED` (delivery) | Mark ready (optional) | `status` with `READY_FOR_PICKUP` | With a rider assigned: `READY_FOR_PICKUP` at once. Otherwise the status is unchanged and `foodReadyAt` is stored; the order becomes `READY_FOR_PICKUP` when a rider is assigned. No rider push |
 | `READY_FOR_PICKUP` (pickup) | Verify the customer's code | `PATCH /orders/:orderId/verify-pickup` | `PICKED_UP_BY_CUSTOMER`; settlement queued |
 | `READY_FOR_PICKUP` (pickup) | Mark no-show after the grace | `status` with `NO_SHOW` | `NO_SHOW`; settled; the no-show cron also does it |
 
 Rules that shape the vendor's role:
 
-- **The vendor cannot mark a delivery order ready.** Only the auto-ready cron sets
-  `READY_FOR_PICKUP` on a delivery order, and only from `ASSIGNED`.
-- **The vendor cannot change the ready time.** There is no preparation-time extension
-  route or logic.
+- **Marking a delivery order ready is optional.** If the vendor does not, the
+  auto-ready cron moves an `ASSIGNED` delivery order to `READY_FOR_PICKUP` 5 minutes
+  after `estimatedReadyAt`, alerts the admins and pushes the assigned rider. See
+  [Order Automation](../03-orders/order-automation.md#auto-ready-autoreadyorder).
+- **The vendor can confirm food ready early, but cannot change the ready time.**
+  `estimatedReadyAt` is set once at acceptance and never changed. Confirming a delivery
+  order ready records `foodReadyAt`, and the order becomes `READY_FOR_PICKUP` once a rider
+  is assigned (or at once if one already is). There is no preparation-time extension route
+  or logic. See
+  [Order Automation](../03-orders/order-automation.md#auto-ready-autoreadyorder).
 - **A vendor cannot cancel once a rider is assigned**, or a pickup order that is
   `READY_FOR_PICKUP`. It must reject (from `PENDING`) or cancel (after accepting).
 - **Order actions need an `APPROVED` profile** and a paid order, and the agreement gate
