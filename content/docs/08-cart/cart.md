@@ -427,14 +427,13 @@ Adding, changing or checking out does not notify anyone.
 
 ## Mismatches and inconsistencies
 
-1. **Menus page wording.** [Menus](../05-products/menus.md#how-cart-checkout-and-orders-consume-product-data) says reading the cart also rewrites the item `name`. `viewCart` re-prices but does not rewrite the name; the name is rewritten by add-to-cart on an existing item, by toggle-on and by `update-addon-quantity`.
-2. **Mutation responses are empty outside development** (`data: null`), so clients must re-read the cart.
-3. **`view-cart` re-writes such carts on every call** because of the unrounded comparison (Executed above).
-4. **Vendor, store and agreement checks run only on add.** Toggle, add-on update and view do not repeat them.
-5. **Cart deletion is a hard delete** although the model has `isDeleted`, and `AGENTS.md` calls the expiry job a soft delete; it removes items and deletes emptied carts.
-6. **Expiry timing in `AGENTS.md`** (30 minutes) does not match the code (10 minutes).
-7. **`update-addon-quantity` loads the product without the deleted/approved filter**, unlike every other path.
-8. **Unused message keys** listed above.
+1. **Mutation responses are empty outside development** (`data: null`), so clients must re-read the cart.
+2. **`view-cart` re-writes such carts on every call** because of the unrounded comparison (Executed above).
+3. **Vendor, store and agreement checks run only on add.** Toggle, add-on update and view do not repeat them.
+4. **Cart deletion is a hard delete** although the model has `isDeleted`, and `AGENTS.md` calls the expiry job a soft delete; it removes items and deletes emptied carts.
+5. **Expiry timing in `AGENTS.md`** (30 minutes) does not match the code (10 minutes).
+6. **`update-addon-quantity` loads the product without the deleted/approved filter**, unlike every other path.
+7. **Unused message keys** listed above.
 
 ---
 

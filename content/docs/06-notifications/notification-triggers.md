@@ -77,10 +77,14 @@ are in `modules/Order/order.service.ts` unless another file is named.
 | Dispatch offer: auto-dispatch, retry, vendor broadcast (`dispatchOrderToPartners`) | Each rider in the offered pool (up to 10) | `ORDER_NEW_DISPATCH_TO_PARTNER` | `order_notification`; `orderId`, `orderStatus`, `deliveryDetails`, `vendorName`, `vendorBusinessLocation`, `customerName`, `deliveryAddress` (the last three and `deliveryDetails` are JSON strings) | Each retry sends again; there is no deduplication. The offer is delivered by push only, there is no socket event. Pool selection is in [Delivery and Dispatch](../03-orders/delivery-dispatch.md). |
 | Rider accepts an offer (`partnerAcceptsDispatchedOrder`) | Vendor | `ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR` | `default`; `orderId`, `orderStatus`, `type: ORDER_STATUS` | Also socket `ORDER_ACCEPTED_BY_PARTNER` to the vendor. |
 | Dispatch deadline reached with no rider (`autoEscalateDispatchOrder`) | Every `ADMIN` / `SUPER_ADMIN` that has a token (`sendToRole`) | `ORDER_DISPATCH_ESCALATED_TO_ADMIN` | `order_notification`; `orderId`, `orderStatus` | Once per order (`dispatchEscalatedAt` latch). Admins without a token get no push and no record. |
+| Delivery order auto-marked `READY_FOR_PICKUP` because the vendor did not confirm within 5 minutes of `estimatedReadyAt` (`autoReadyOrder`, fallback) | Every `ADMIN` / `SUPER_ADMIN` that has a token (`sendToRole`) | `ORDER_AUTO_READY_FALLBACK_TO_ADMIN` | `order_notification`; `orderId`, `orderStatus` | Sent once, by the cron run that wins the status update. Also sent for a pickup order that the fallback marks ready. Not sent when the vendor marked the order ready. |
+| Same fallback, delivery order | The assigned rider | `ORDER_AUTO_READY_TO_PARTNER` | `order_notification`; `orderId`, `orderStatus`, `type: ORDER_STATUS` | Only for the fallback, to the claim winner. A vendor's manual ready, or the release of a vendor-confirmed order at assignment, sends no rider push. |
 | Admin assigns a rider (`assignDeliveryPartnerByAdmin`) | Rider | `ORDER_ASSIGNED_BY_ADMIN_TO_PARTNER` | `order_notification`; `orderId`, `orderStatus`, `type: ORDER_STATUS` | |
 | Same call | Vendor | `ORDER_ACCEPTED_BY_PARTNER_TO_VENDOR` | `default`; same keys | Plus socket `ORDER_ACCEPTED_BY_PARTNER`. |
 | Rider sets `PICKED_UP`, OTP generated (`updateOrderStatusByDeliveryPartner`) | Customer | `DELIVERY_OTP_TO_CUSTOMER` | `default`; `orderId`, `orderStatus`, `type: ORDER_STATUS` | OTP is in the push body, the stored message and the `DELIVERY_OTP_GENERATED` socket payload. Also an email (`DELIVERY_CODE`). |
 | Rider status `ON_THE_WAY` or `DELIVERED` (`PROCESS_ORDER_POST_UPDATE` job, `order.worker.ts` `processOrderPostUpdate`) | Vendor | `ORDER_STATUS_UPDATE_TO_VENDOR` | `default`; `orderId`, `orderStatus`, `type: ORDER_STATUS` | Runs after the settlement transaction; an error in the notification block is caught and logged. |
+
+Rider SOS, delivery OTP lock, verification issue, receipt confirmation, rider replacement, manual completion and fault-cancel notifications are listed in [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#notifications-and-events).
 
 Everything above is notification-side. The rules that decide whether the
 transition happens at all are in [Order Lifecycle](../03-orders/order-lifecycle.md).
@@ -134,10 +138,10 @@ Sources are in `modules/Payout/payout.service.ts`. Recipients are the payout own
 
 | Event | Recipient | Message key | Type | Notes |
 | --- | --- | --- | --- | --- |
-| Fleet manager initiates a settlement for one of their own riders (`POST /payouts/initiate-settlement`, `FLEET_MANAGER` only) | The rider | `PAYOUT_SETTLEMENT_INITIATED` | `PAYOUT` | After the transaction commits. `data`: `amount`, `status`, `paymentMethod`. |
+| Fleet manager initiates a settlement for one of their own riders (`POST /payouts/initiate-settlement`, `FLEET_MANAGER` only) | The rider | `PAYOUT_SETTLEMENT_INITIATED` | `PAYOUT` | After the transaction commits. `data`: `amount`, `status`, `paymentMethod`. The request currently fails the `Payout` schema validation before this point, so the push is not reached (see [Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md#manual-request-post-payoutsinitiate-settlement)). |
 | Initiation blocked because bank name or IBAN is missing | The target user | `PAYOUT_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent **before** the request fails with `CANNOT_INITIATE_SETTLEMENT_INCOMPLETE_BANK_DETAILS`. |
 | Settlement finalized (`POST /payouts/finalize-settlement/:payoutId`; `ADMIN`, `SUPER_ADMIN`, `FLEET_MANAGER`) | The payout owner | `PAYOUT_SETTLEMENT_COMPLETED` | `PAYOUT` | After commit. `data`: `amount`, `status`, `paymentMethod`. |
-| Daily 00:00 automated settlement (`cron/payout.cron.ts` calling `initiateAutomatedSettlement`) skips a wallet owner with incomplete bank details | That user | `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent inside the loop **before** the surrounding transaction commits. Riders that belong to a fleet manager are skipped entirely. |
+| Daily 00:00 automated settlement (`cron/payout.cron.ts` calling `initiateAutomatedSettlement`; runs only when `payout.autoGenerate` is on and today is a payout day) skips a wallet owner with incomplete bank details | That user | `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE` | `PAYOUT_ALERT` | Sent inside the loop **before** the surrounding transaction commits. Riders that belong to a fleet manager are skipped entirely. |
 
 The automated run creates `PENDING` payouts but sends **no** "initiated"
 notification for them; only the two failure/completion messages above exist.
@@ -167,7 +171,7 @@ Wallet and payout rules are outside this page.
 | `FLEET_MANAGER` | `ACCOUNT_STATUS_*`, `CORRECTION_REQUEST_TO_USER`, `PAYOUT_SETTLEMENT_COMPLETED`, `PAYOUT_BULK_BANK_DETAILS_INCOMPLETE`, `AGREEMENT_VERSION_PUBLISHED`, broadcasts |
 | `ADMIN`, `SUPER_ADMIN` | `ORDER_DISPATCH_ESCALATED_TO_ADMIN`, `NEW_SUBMISSION_FOR_APPROVAL_TO_ADMIN`, `CORRECTION_CONFIRMED_TO_ADMIN`, `NEW_INGREDIENT_PURCHASE_TO_ADMIN`, broadcasts, and their own `ACCOUNT_STATUS_*` if another admin changes their status |
 
-Support chat and SOS reach admins (and fleet managers for SOS) only as socket events.
+Support chat and a plain SOS reach admins (and fleet managers for SOS) only as socket events. A rider SOS on an order is also pushed to admins (`DELIVERY_SOS_TO_ADMIN`; see [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#notifications-and-events)).
 
 ---
 
@@ -183,7 +187,7 @@ that is noted.
 - **Rider `REASSIGNMENT_NEEDED`**: no push to the vendor or admins; the retry or escalation that follows is what eventually reaches an admin.
 - **`DELIVERED`**: customer gets an email only (also for `PICKED_UP_BY_CUSTOMER`); no push.
 - **Payment intent, payment failure, refund**: no push. The admin refund sends the customer an email (`refund-success`, not logged) and does not create a `Notification`.
-- **Rating, offers, referrals, points, wallet credits, profile changes, support and SOS**: no `NotificationService` call.
+- **Rating, offers, referrals, points, wallet credits, profile changes, support and a plain SOS**: no `NotificationService` call; the rider SOS on an order is the exception, see [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md#notifications-and-events) (see [Points and Referrals](../09-offers-and-coupons/points-and-referrals.md), [Support](../02-platform/support.md) and [SOS](../02-platform/sos.md)).
 
 ---
 

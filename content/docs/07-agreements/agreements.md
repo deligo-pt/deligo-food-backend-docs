@@ -353,7 +353,6 @@ Failing to enqueue is caught and logged, and the publish still succeeds.
 2. **Rows created through the gate for a `SUB_VENDOR`** are created with `createdBy` set to the branch's id and `createdByModel` `Admin` (the model name is chosen by comparing the caller's role with `VENDOR`). The parent's row is thereby attributed to a non-admin id. **Inferred** from `ensureCurrentAgreementForParty`; not reproduced.
 3. **Admin visibility is per creator**, so `GET /agreements` does not list agreements for a non-super admin unless they created them.
 4. **`AGENTS.md` names `agreement.subVendor.test.ts`**, but no such file exists (the only `*.test.ts` under `src` is for Meilisearch).
-5. **`authorization.md` says a `SUB_VENDOR` is not gated.** The middleware gates it through its parent; see [Vendors and Branches](../04-vendors/vendors-and-branches.md#agreement-and-access-rules), which already records the contradiction.
 
 ---
 

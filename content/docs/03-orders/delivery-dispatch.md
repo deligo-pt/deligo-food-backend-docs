@@ -86,7 +86,13 @@ paths do not search at all: the order moves to `AWAITING_PARTNER` with a
 - The offered riders' ids are merged into `dispatchPartnerPool` (as strings) and
   `dispatchExpiresAt` is set to now + `DISPATCH_WINDOW_SECONDS` (**120 s**).
 - A `DISPATCHING` history entry ("Broadcasted to N nearby delivery partners") is
-  pushed; `totalOfferedOrders` is incremented for each rider.
+  pushed; `totalOfferedOrders` is incremented for each rider. This is the second
+  `DISPATCHING` entry of a dispatch: the claim step that moved the order into
+  `DISPATCHING` already recorded why (for example "Manual broadcast:
+  re-broadcasting to nearby delivery partners." or "Auto-dispatch triggered:
+  preparation window reached."). The two entries come from two separate steps (the
+  claim, then the search and offer) and are expected, not a lifecycle error; the
+  status, pool and `dispatchExpiresAt` are each written once.
 - Each rider gets a push (`ORDER_NEW_DISPATCH_TO_PARTNER`, channel
   `order_notification`) carrying the order id, vendor name, addresses and
   delivery details. There is **no socket offer event**; see
@@ -96,6 +102,24 @@ paths do not search at all: the order moves to `AWAITING_PARTNER` with a
 - Every step is a conditional update on `orderStatus: 'DISPATCHING'`. If the
   order changed in the meantime the call fails with
   `ORDER_STATUS_CHANGED_DURING_DISPATCH` (409).
+
+### Failure recovery
+
+All dispatch paths first claim the order into `DISPATCHING` and then call
+`dispatchOrderToPartners`. If the geo search or the dispatch write fails
+unexpectedly after the claim, the order would otherwise stay `DISPATCHING` with an
+empty pool and no `dispatchExpiresAt`, which nothing expires or retries. The
+function therefore recovers it: while the pool is still empty, the order moves back
+to `AWAITING_PARTNER` with a fresh `dispatchExpiresAt` (now + 120 s), a history
+entry "Dispatch failed unexpectedly, waiting for partner" and a status event, and
+the original error is rethrown to the caller. The retry and escalation steps below
+then continue as for a normal "no rider found" outcome.
+
+This is a recovery path and does not count as a successful dispatch: no rider was
+offered the order and no rider push was sent. It does not apply when the failure
+comes after the dispatch write (pool and expiry already set); that order stays
+`DISPATCHING` and the expiry cron moves it on. A status change or a no-rider
+fallback that already happened is never overwritten.
 
 The manual broadcast additionally requires an `APPROVED` caller that owns the
 order, a `DELIVERY` order, an **empty** `dispatchPartnerPool`
@@ -133,6 +157,14 @@ Details:
   rider claim (`currentOrderId: null`) inside one transaction. If the rider
   claim finds the rider busy the transaction rolls back
   (`PARTNER_ALREADY_HAS_ACTIVE_ORDER`), so the order is not left assigned.
+- **Vendor already confirmed the food ready.** If the order has `foodReadyAt`
+  (the vendor marked it ready before a rider was assigned), the same transaction
+  also moves the order from `ASSIGNED` to `READY_FOR_PICKUP` and adds a second
+  history entry, so the rider can set `PICKED_UP` immediately without waiting for
+  a cron tick. The response, the vendor push and `ORDER_STATUS_UPDATED` then carry
+  `READY_FOR_PICKUP`. Without `foodReadyAt` the order stays `ASSIGNED` until the
+  vendor marks it ready or the auto-ready fallback runs (see
+  [Order Automation](./order-automation.md#auto-ready-autoreadyorder)).
 - **Late requests trigger expiry.** The expiry check runs before the action is
   read, so a late accept or a late reject by any approved rider moves the order
   to `AWAITING_PARTNER`. The `handleOrderExpiryCron` does the same every minute.
@@ -179,7 +211,7 @@ permission is enforced only for `ADMIN`; `SUPER_ADMIN` bypasses it (see
 | Route | Behavior |
 | --- | --- |
 | `GET /orders/:orderId/nearby-partners` | Read-only. `DELIVERY` orders only; needs a usable `pickupAddress` (`ORDER_PICKUP_LOCATION_NOT_SET`). One `$geoNear` within 5 km of the pickup address: approved, not deleted, `IDLE`, `currentOrderId: null`, not in the rejected pool. Returns up to **20** riders nearest-first with name, contact, rating and `distanceKm`, plus `totalAvailablePartners`. **Nothing is reserved.** |
-| `PATCH /orders/:orderId/assign-partner` | Body `deliveryPartnerId` (24-hex), optional `note` (≤ 500). Only a `DELIVERY` order in `AWAITING_PARTNER` with no rider (`ORDER_NOT_AWAITING_PARTNER_FOR_ASSIGNMENT`). In one transaction, claims the rider (approved, `IDLE`, no current order) and then the order; errors `PARTNER_NOT_APPROVED_FOR_ASSIGNMENT`, `PARTNER_NOT_AVAILABLE_FOR_ASSIGNMENT`. Sets `ASSIGNED`, clears the pool and the escalation latch, writes an activity log, pushes to the rider and vendor, and emits the socket events |
+| `PATCH /orders/:orderId/assign-partner` | Body `deliveryPartnerId` (24-hex), optional `note` (≤ 500). Only a `DELIVERY` order in `AWAITING_PARTNER` with no rider (`ORDER_NOT_AWAITING_PARTNER_FOR_ASSIGNMENT`). In one transaction, claims the rider (approved, `IDLE`, no current order) and then the order; errors `PARTNER_NOT_APPROVED_FOR_ASSIGNMENT`, `PARTNER_NOT_AVAILABLE_FOR_ASSIGNMENT`. Sets `ASSIGNED` (or `READY_FOR_PICKUP` in the same transaction when the order already has `foodReadyAt`), clears the pool and the escalation latch, writes an activity log, pushes to the rider and vendor (carrying the order's actual status), and emits the socket events |
 
 The rider list from `nearby-partners` can be stale by the time the admin assigns;
 the assign call re-validates the rider.
@@ -198,6 +230,7 @@ does to the rider:
 | Event | Effect on the rider |
 | --- | --- |
 | Accept / admin assign | `currentOrderId` set, `currentStatus = ON_DELIVERY`; accept also increments `totalAcceptedOrders` |
+| SOS, replacement or fault cancel (in-transit orders) | See [Delivery Exceptions and Verification](./delivery-exceptions.md): a replaced or fault-canceled rider is set `OFFLINE` and released from the order |
 | Hand back (`REASSIGNMENT_NEEDED`) | Order's `deliveryPartnerId` cleared, rider added to `dispatchRejectedPartnerPool`, `deliveryPartnerCancelReason` saved. The worker then sets the rider `IDLE`, clears `currentOrderId` and increments `canceledDeliveries` and `totalRejectedOrders` |
 | `DELIVERED` | The worker sets `IDLE`, clears `currentOrderId`, increments `totalDeliveries`, `completedDeliveries` and `totalDeliveryMinutes` (from the `PICKED_UP` history entry to now, at least 1) |
 | Customer cancels an assigned order | `currentOrderId` cleared, `IDLE`, `canceledDeliveries` incremented, in the cancellation transaction |
@@ -235,6 +268,7 @@ does to the rider:
 ## Related documentation
 
 - [Order Lifecycle](./order-lifecycle.md): statuses, transitions and the roles allowed to trigger them.
+- [Delivery Exceptions and Verification](./delivery-exceptions.md): rider SOS, rider replacement, OTP lock, receipt confirmation, manual completion and fault cancel for in-transit orders.
 - [Order Automation](./order-automation.md): the cron jobs that dispatch, retry and escalate.
 - [Order Tracking and Realtime](./order-tracking-and-realtime.md): sockets, rider live location and order reads.
 - [Cancellations, Refunds and Settlement](./cancellations-refunds-settlement.md): what happens to a rider and the money when an order ends.

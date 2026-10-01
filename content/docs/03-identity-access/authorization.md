@@ -36,14 +36,14 @@ middleware treats the token's `role` as the effective role after confirming an
 | `ADMIN` | Back-office staff | Gated further by a per-account `permissions[]` list on the `Admin` profile |
 | `FLEET_MANAGER` | Manages a pool of delivery partners | Can onboard delivery partners; scoped to its own fleet in services |
 | `VENDOR` | Restaurant / store owner (parent account) | Subject to the agreement gate; can onboard its own branches |
-| `SUB_VENDOR` | A branch of a vendor | Same `Vendor` collection; scoped via `parentVendorId`; **not** subject to the agreement gate |
+| `SUB_VENDOR` | A branch of a vendor | Same `Vendor` collection; scoped via `parentVendorId`; has no agreement of its own but **is** subject to the agreement gate through its parent vendor's agreement (see [the agreement gate](#the-agreement-gate-as-an-authorization-constraint)) |
 | `DELIVERY_PARTNER` | Rider | Scoped to its own assignments; drives rider-only order transitions |
 | `CUSTOMER` | End user | Scoped to its own carts, orders, addresses, etc. |
 
 **There is no implicit role hierarchy.** `auth('ADMIN')` rejects a
 `SUPER_ADMIN` because `'SUPER_ADMIN'` is not in the list. Routes that both
 roles may use list both explicitly — `auth('ADMIN', 'SUPER_ADMIN')` is the
-standard admin pairing (~79 routes). Omitting a role from the list is the only
+standard admin pairing (about 89 routes). Omitting a role from the list is the only
 way to exclude it.
 
 ---
@@ -121,7 +121,7 @@ no other profile type has a permission field, and nothing reads one.
 defines 14 action codes. They are stored as plain strings in
 `Admin.permissions` and compared by string equality in `auth()`.
 
-Only **four** are currently referenced by any `auth(...)` call, i.e. actually
+Only **five** are currently referenced by any `auth(...)` call, i.e. actually
 enforced:
 
 | Permission action | Enforced on | Routes |
@@ -130,10 +130,11 @@ enforced:
 | `CAN_MANAGE_AGREEMENTS` | `/api/v1/agreements/*`, `/api/v1/agreement-versions/*` | `agreement.route.ts`, `agreement-version.route.ts` |
 | `CAN_MANAGE_INGREDIENTS` | ingredient create / update / delete / restock | `ingredients.route.ts` |
 | `CAN_MANAGE_ACTIVITY_LOGS` | `/api/v1/activity-logs/*` | `activityLog.route.ts` |
+| `CAN_MANAGE_ORDERS` | `PATCH /api/v1/orders/:orderId/assign-partner` and `GET /api/v1/orders/:orderId/nearby-partners` | `order.route.ts` (see [Delivery Dispatch](../03-orders/delivery-dispatch.md)) |
 
-The remaining ten — `CAN_VIEW_DASHBOARD`, `CAN_MANAGE_ADMINS`,
+The remaining nine — `CAN_VIEW_DASHBOARD`, `CAN_MANAGE_ADMINS`,
 `CAN_MANAGE_VENDORS`, `CAN_MANAGE_PARTNERS`, `CAN_MANAGE_FLEET`,
-`CAN_MANAGE_CUSTOMERS`, `CAN_MANAGE_ORDERS`, `CAN_MANAGE_COUPONS`,
+`CAN_MANAGE_CUSTOMERS`, `CAN_MANAGE_COUPONS`,
 `CAN_VIEW_ANALYTICS`, `CAN_MANAGE_SYSTEM_SETTINGS` — are valid values that can
 be created and assigned, but no route or service checks them. Assigning them to
 an admin currently has no effect on access. They are documented here as
@@ -203,11 +204,11 @@ controller. Common shapes:
 | `auth('CUSTOMER')` | Single role | cart, checkout, place order |
 | `auth('VENDOR', 'SUB_VENDOR')` | A parent vendor and its branches | catalog management, order accept/prepare |
 | `auth('ADMIN', 'SUPER_ADMIN')` | Any admin | admin CRUD, most back-office reads |
-| `auth('ADMIN', 'SUPER_ADMIN', ['CAN_MANAGE_X'])` | Admin **with** a permission | permissions, agreements, ingredients, activity logs |
+| `auth('ADMIN', 'SUPER_ADMIN', ['CAN_MANAGE_X'])` | Admin **with** a permission | permissions, agreements, ingredients, activity logs, admin rider assignment |
 | `auth('ADMIN', 'SUPER_ADMIN', 'VENDOR', 'SUB_VENDOR', 'CUSTOMER', ...)` | Shared read endpoints | e.g. `GET /orders` and `GET /orders/:id`, then scoped in the service |
 | *(no `auth`)* | Public | registration, login, OTP, social login, `POST /payment/reduniq/notification` (gateway webhook), `GET /` |
 
-Roughly one in thirteen protected routes adds a permission array; the rest are
+Roughly one in ten protected routes (29 of 285 `auth(...)` calls) adds a permission array; the rest are
 role-only. When a shared endpoint lists many roles, the meaningful restriction
 is applied in the service (next section).
 
@@ -251,9 +252,10 @@ The order lifecycle is partitioned by role inside `order.service.ts`:
 
 | Action | Allowed role (checked in the service) |
 | --- | --- |
-| Create / cancel (pre-accept) / reorder | `CUSTOMER` |
-| Accept / reject / prepare / ready / verify pickup code / broadcast | `VENDOR`, `SUB_VENDOR` |
+| Create / cancel (any non-terminal status) / reorder | `CUSTOMER` |
+| Accept / reject / cancel after accepting / ready / no-show / verify pickup code / broadcast | `VENDOR`, `SUB_VENDOR` |
 | Accept dispatch / picked up / on the way / delivered / request reassignment | `DELIVERY_PARTNER` |
+| Assign a rider to an order awaiting one | `ADMIN` (with `CAN_MANAGE_ORDERS`), `SUPER_ADMIN` |
 
 A call from the wrong role fails with `COMMON_ACCESS_DENIED` even though the
 route's `auth(...)` list permitted the request to reach the controller. This is
@@ -275,19 +277,29 @@ For roles that must sign a platform agreement, `auth()` adds a final gate after
 the role and permission checks. Its configuration lives in
 `src/app/modules/Agreement/agreement.config.ts`.
 
-**Who it affects.** Only roles with an `initialAgreementForRole` entry in
+**Who it affects.** Roles with an `initialAgreementForRole` entry in
 `AGREEMENT_CONFIG` — currently **`VENDOR`** (`INITIAL_VENDOR_AGREEMENT`) and
-**`FLEET_MANAGER`** (`INITIAL_FLEET_MANAGER_AGREEMENT`). `SUB_VENDOR`,
-`DELIVERY_PARTNER`, `CUSTOMER`, `ADMIN`, and `SUPER_ADMIN` are not gated.
+**`FLEET_MANAGER`** (`INITIAL_FLEET_MANAGER_AGREEMENT`) — and, indirectly, a
+**`SUB_VENDOR`**: a branch has no agreement row of its own, but
+`AgreementService.resolveAgreementPartyContext` resolves it to its parent
+`VENDOR`, so the branch's requests are gated by the **parent's** agreement (a
+branch without a `parentVendorId`, or whose parent is deleted, is not checked).
+`DELIVERY_PARTNER`, `CUSTOMER`, `ADMIN`, and `SUPER_ADMIN` are not gated. See
+[Agreement Gate and Party Resolution](../07-agreements/agreement-gate.md).
 
 **When it runs.** All of:
 
-1. `getInitialAgreementTypeForRole(role)` returns a type (i.e. the role is
-   gated), **and**
+1. The caller resolves to an agreement party (the role is gated, or is a
+   `SUB_VENDOR` with a parent), **and**
 2. `AuthUser.status === APPROVED`, **and**
-3. `req.baseUrl` does **not** start with an exempt prefix:
-   `/api/v1/agreements`, `/api/v1/auth/logout`, `/api/v1/auth/change-password`,
-   `/api/v1/auth/update-fcm-token`, `/api/v1/notifications/my-notifications`.
+3. `req.baseUrl` does **not** start with an exempt prefix. The configured list is
+   `/api/v1/agreements`, `/api/v1/uploads`, `/api/v1/auth/logout`,
+   `/api/v1/auth/change-password`, `/api/v1/auth/update-fcm-token` and
+   `/api/v1/notifications/my-notifications`. **In Express `req.baseUrl` is the
+   router's mount path** (for example `/api/v1/auth`), so only `/api/v1/agreements`
+   and `/api/v1/uploads` match in practice; the other four entries never match
+   (details and the unresolved effect are in
+   [the gate page](../07-agreements/agreement-gate.md#the-exemption-check-does-not-match-as-documented)).
 
 **What it blocks.** When a *current* agreement exists for the party and it is
 not signed, the request is rejected with `403 AGREEMENT_RESIGN_REQUIRED` (the
@@ -351,7 +363,7 @@ rules in `onboardUser`: a `VENDOR` caller onboards its own branch, while an
 | Caller must hold a valid, non-blocked, non-deleted account with a live device session | `auth()` | see [Authentication](./authentication.md) |
 | Caller's role must be in the route's allowed list | `auth()` | `requiredRoles.includes(role)` |
 | `ADMIN` must hold every listed permission action | `auth()` | `req.user.permissions` string match (skipped for `SUPER_ADMIN`) |
-| Gated `VENDOR` / `FLEET_MANAGER` must have signed the current agreement for writes and order routes | `auth()` | `AgreementService.isPartyAgreementSigned` + exempt/restricted prefix lists |
+| Gated `VENDOR` / `FLEET_MANAGER` (and a `SUB_VENDOR`, through its parent) must have signed the current agreement for writes and order routes | `auth()` | `AgreementService.isPartyAgreementSigned` + exempt/restricted prefix lists (most exempt entries do not match `req.baseUrl`) |
 | Caller may act only on their own resource | service | `currentUser.userId` / `_id` / `parentVendorId` comparisons |
 | Shared list endpoints return only the caller's rows | service | role-dependent base filter before `QueryBuilder` |
 | Order lifecycle actions are restricted to the correct role | `order.service.ts` | explicit `currentUser.role` checks per action |

@@ -94,12 +94,16 @@ A single middleware factory that does a lot:
    and attaches it as `req.user`.
 8. **Admin permission check** — when called as
    `auth('ADMIN', ['SOME_ACTION'])`, every listed `TPermissionAction` must be
-   present in the admin's `permissions[]`.
-9. **Agreement gate** — for roles that require a signed legal agreement, a
+   present in the admin's `permissions[]`. The check runs only for the `ADMIN`
+   role; `SUPER_ADMIN` skips it.
+9. **Agreement gate** — for roles that require a signed legal agreement
+   (`VENDOR`, `FLEET_MANAGER`, and a `SUB_VENDOR` through its parent vendor), a
    non-GET or order-restricted request by an `APPROVED` user with an unsigned
    current agreement is blocked with `403 AGREEMENT_RESIGN_REQUIRED` (carrying a
    structured `data` payload). Exempt paths are configured in
-   `Agreement/agreement.config.ts`.
+   `Agreement/agreement.config.ts`, but most of them do not match what the gate
+   compares; see
+   [Agreement Gate](../07-agreements/agreement-gate.md#the-exemption-check-does-not-match-as-documented).
 
 ### `validateRequest(schema)` — `src/app/middlewares/validateRequest.ts`
 
@@ -157,7 +161,7 @@ the circuit-breakered integration clients are used — see
 | Localization | `parseLanguage` + `resolveLocalizedMessage` | `en` / `pt`; message values may be strings or `(vars) => string`. |
 | IDs | `src/app/utils/*` | `customNanoId` (A–Z0–9); prefixes such as `C-`, `V-`, `SV-`, `D-`, `FM-`, `A-`, `SA-` for users and `TXN-` for transactions. |
 | Storage | `src/app/utils/storage.ts` | Uploads to RustFS; throws on missing config at import time. |
-| Circuit breakers | `src/app/utils/circuitBreaker.ts` | `opossum` wrapper (default 50% error threshold, 20s reset) used by every outbound integration. |
+| Circuit breakers | `src/app/utils/circuitBreaker.ts` | `opossum` wrapper (default 50% error threshold, 20s reset). Used by RedUniq, Pasta Digital, Google Maps, FCM push, Nodemailer email, BulkGate SMS and the Google/Facebook token checks. Meilisearch, OpenAI and RustFS/S3 are **not** wrapped. |
 
 ## Background processing
 
@@ -167,10 +171,10 @@ Two independent mechanisms.
 
 | Schedule | Job(s) |
 | --- | --- |
-| `* * * * *` | `vendorStoreOpenCloseCron`, `handleOrderExpiryCron` |
+| `* * * * *` | In this order: `vendorStoreOpenCloseCron`, `handleOrderExpiryCron`, `handleAutoRetryDispatchCron`, `handleAutoAcceptCron`, `handleAutoDispatchCron`, `handleAutoReadyCron` (see [Order Automation](../03-orders/order-automation.md)) |
 | `*/5 * * * *` | abandoned ingredient-stock release; cart-item expiry + pre-expiry warning; self-pickup reminder; auto-`NO_SHOW` for uncollected pickup orders |
-| `0 0 * * *` (Europe/Lisbon) | `handlePayoutAutomatedCron` |
-| `0 3 * * *` (Europe/Lisbon) | `handleActivityLogRetentionCron` |
+| `0 0 * * *` (Europe/Lisbon) | `handlePayoutAutomatedCron`: does work only when `payout.autoGenerate` is on in the global settings and today is one of `payout.payoutDays` |
+| `0 3 * * *` (Europe/Lisbon) | `handleActivityLogRetentionCron` (see [Activity Logs](../12-activity-logs/activity-logs.md#immutability-and-retention)) |
 
 The daily jobs pin `timezone: config.default_timezone` so they fire on platform
 time regardless of the host clock.
@@ -208,8 +212,9 @@ same CORS allowlist as the REST app.
 
 ## External integrations
 
-Each has a dedicated client and an `opossum` circuit breaker; most also retry
-transient failures via `withRetry`.
+Each has a dedicated client. Most use an `opossum` circuit breaker (Meilisearch,
+OpenAI and RustFS/S3 do not), and only RedUniq, the Pasta Digital token call,
+email and SMS also retry transient failures via `withRetry`.
 
 | Integration | Client | Used for |
 | --- | --- | --- |
@@ -227,22 +232,31 @@ transient failures via `withRetry`.
 ## Important cross-module flows
 
 - **Checkout → payment → order.** `Checkout` builds and stores a checkout
-  summary; `Payment` creates a RedUniq intent against that summary; on a
-  successful gateway notification the client calls `Order` `create-order`, which
-  writes the `Order` plus its payout math and enqueues
-  `NEW_ORDER_POST_PROCESS`.
-- **Dispatch.** A vendor calls `broadcast-order`; the order moves to
-  `DISPATCHING` with a `dispatchPartnerPool` and a `dispatchExpiresAt`.
-  Delivery partners accept via `accept-dispatch-order`; `handleOrderExpiryCron`
-  clears expired dispatch windows and notifies the vendor. Search widens over
-  distance tiers (`DELIVERY_SEARCH_TIERS_METERS = [3000, 4000, 5000]`).
+  summary; `Payment` creates a RedUniq intent against that summary. The `Order`
+  (with its payout math) is written by `finalizeCheckoutIntoOrder`, which is
+  reached from `POST /orders/create-order` (client confirmation), from the
+  gateway notification webhook, or, for a saved card, from
+  `pay-with-saved-token` itself; it then enqueues `NEW_ORDER_POST_PROCESS`. See
+  [Payments](../10-payments/payments.md).
+- **Dispatch.** For delivery orders the auto-dispatch cron normally starts
+  dispatch shortly before `estimatedReadyAt`; a vendor can also call
+  `broadcast-order` (valid from `ACCEPTED`, `PREPARING`, `AWAITING_PARTNER` and
+  `REASSIGNMENT_NEEDED`, with an empty pool). The order moves to `DISPATCHING`
+  with a `dispatchPartnerPool` and a `dispatchExpiresAt`. Delivery partners
+  accept via `accept-dispatch-order`; `handleOrderExpiryCron` clears expired
+  dispatch windows and notifies the vendor. Search widens over distance tiers
+  (`DELIVERY_SEARCH_TIERS_METERS = [3000, 4000, 5000]`). See
+  [Delivery Dispatch](../03-orders/delivery-dispatch.md).
 - **Self-pickup.** `PICKUP` orders generate a 6-digit `pickup.code`
   (`select: false`); the vendor verifies it at `verify-pickup`. A
-  `READY_FOR_PICKUP` pickup order still uncollected once the vendor's closing
-  time passes is auto-marked `NO_SHOW` by the `*/5` cron.
+  `READY_FOR_PICKUP` pickup order still uncollected 15 minutes after the later of
+  its pickup time and ready time, or once the vendor's closing time passes, is
+  auto-marked `NO_SHOW` by the `*/5` cron.
 - **Settlement.** Order completion produces `Transaction` ledger rows and moves
   balances on the recipients' `Wallet`; `Payout` batches owed balances to
-  vendors, riders, and fleet managers, driven by the midnight payout cron.
+  vendors, riders, and fleet managers, either by an admin or fleet manager or,
+  when automatic generation is enabled in the global settings, by the midnight
+  payout cron.
 - **Agreements.** New users in gated roles must sign the current agreement
   version; the `auth` middleware enforces re-signing when a new version is
   published (notified through `agreement-queue`).
@@ -256,13 +270,16 @@ flowchart TD
     A[Checkout summary] --> B[Create RedUniq intent]
     B --> C{Gateway result}
     C -->|success| D["POST /orders/create-order"]
-    C -->|failure| E["POST /payment/reduniq/handle-payment-failure"]
+    C -->|failure| E["POST /payment/reduniq/handle-payment-failure/:checkoutSummaryId"]
     E --> A
 ```
 
-**Delivery dispatch — accept, expiry, reassignment.** `broadcast-order` is valid
-from `AWAITING_PARTNER` and `REASSIGNMENT_NEEDED`, so both paths loop back to a
-re-broadcast.
+**Delivery dispatch — accept, expiry, reassignment.** A dispatch starts from the
+auto-dispatch cron or a vendor `broadcast-order` (valid from `ACCEPTED`,
+`PREPARING`, `AWAITING_PARTNER` and `REASSIGNMENT_NEEDED`). The retry cron also
+re-dispatches `AWAITING_PARTNER` and `REASSIGNMENT_NEEDED` orders, so the diagram
+shows both paths looping back to a broadcast. `REASSIGNMENT_NEEDED` is a rider
+action from `ASSIGNED` only, before pickup.
 
 ```mermaid
 flowchart TD
@@ -287,7 +304,7 @@ flowchart TD
     D --> E["DELIVERED (delivery OTP)"]
     B -->|PICKUP| F[READY_FOR_PICKUP]
     F --> G["PICKED_UP_BY_CUSTOMER (pickup code)"]
-    F -.->|closing time passes| H[NO_SHOW]
+    F -.->|"grace period or closing time passes"| H[NO_SHOW]
 ```
 
 See **[Data Model](../02-platform/data-model.md)** for the collections these

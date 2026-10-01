@@ -21,7 +21,7 @@ Identity is split into two documents:
 
 | Collection | Holds | Notes |
 | --- | --- | --- |
-| `AuthUser` | Credentials and session state: `email` / `contactNumber`, `password` (hashed, `select` off), `role`, `status`, `loginDevices[]`, `socialAccounts[]`, `isEmailVerified`, `passwordChangedAt`, `twoFactorEnabled`, `isDeleted` | One per (identity, role). `userId` is the shared business key. |
+| `AuthUser` | Credentials and session state: `email` / `contactNumber`, `password` (hashed; not `select: false`, only stripped from `toJSON` / `toObject`), `role`, `status`, `loginDevices[]`, `socialAccounts[]`, `isEmailVerified`, `passwordChangedAt`, `twoFactorEnabled`, `isDeleted` | One per (identity, role). `userId` is the shared business key. |
 | Role profile | Everything domain-specific about that user | One of five collections, chosen by `profileModel`. |
 
 `AuthUser.profileId` + `AuthUser.profileModel` point at the profile document;
@@ -130,11 +130,14 @@ Notable embedded structures (`src/app/modules/Order/order.model.ts`):
 | `orderCalculation` | Subtotal, discounts, tax, service charge (+ VAT) |
 | `delivery` | Charge, VAT, distance, estimated time |
 | `payoutSummary` | The full split: `deliGoCommission` (incl. `totalPlatformGrossHolding`), `fleet`, `vendor.vendorNetPayout`, `rider.riderNetEarnings` |
-| `paymentMethod` / `paymentStatus` / `transactionId` / `isPaid` | Payment linkage (method ∈ `CARD · MB_WAY · APPLE_PAY · PAYPAL · GOOGLE_PAY · OTHER`) |
+| `paymentMethod` / `paymentStatus` / `transactionId` / `isPaid` | Payment linkage (method ∈ `CARD · MB_WAY · APPLE_PAY · PAYPAL · GOOGLE_PAY · OTHER`). There is no separate Payment collection; see [Payments](../10-payments/payments.md#where-payment-state-lives) |
 | `orderStatus` + `statusHistory[]` | State machine + audit trail |
 | `fulfillmentType` | `DELIVERY` or `PICKUP` |
 | `pickup` | Self-pickup: 6-digit `code` (`select: false`), `readyAt`, `verifiedAt` |
-| `deliveryOtp` | Delivery handoff OTP (`select: false`), `attempts` |
+| `deliveryOtp` | Delivery handoff OTP (`code` is `select: false`), `attempts`, `lockedAt` (set when the fifth wrong code locks it), `generation` / `resetCount` (bumped by an admin reset or rider replacement) |
+| `estimatedReadyAt` / `foodReadyAt` | `estimatedReadyAt`: expected readiness, set at acceptance. `foodReadyAt`: when the vendor confirmed a delivery order ready (empty if never confirmed). See [Order Automation](../03-orders/order-automation.md#order-timing-fields) |
+| `deliveryException` | Admin-only (`select: false`) embedded record of a rider SOS or a delivery OTP lock: `type`, `status` (`OPEN` / `ACKNOWLEDGED` / `RESOLVED`), resolution and audit fields. Does not change `orderStatus`. See [Delivery Exceptions and Verification](../03-orders/delivery-exceptions.md) |
+| `deliveryVerification` | Admin-only (`select: false`) embedded record of a rider-reported verification issue and the customer's receipt confirmation: `status` (`REPORTED` / `CONFIRMATION_REQUESTED` / `CONFIRMED` / `DECLINED`), `productHandedOver`, request and response timestamps. Does not change `orderStatus` |
 | `dispatchPartnerPool[]` / `dispatchExpiresAt` | Rider broadcast state while `DISPATCHING` |
 | `invoiceSync` | Pasta Digital e-invoice result (`invoiceNo`, `atcud`, `signature`, `isSynced`) |
 | `refundStatus` | `NOT_APPLICABLE · PENDING · REFUNDED · FAILED` |
@@ -191,12 +194,16 @@ recipients' wallets; it is read by payouts and analytics.
 ### `Payout` — settlement batches
 
 Money leaving the platform to a `Vendor`, `DeliveryPartner`, or `FleetManager`
-(`userId` / `userModel`), initiated by an `Admin` or `FleetManager`
-(`senderId` / `senderModel`). Covers a `startDate`–`endDate` window, carries
+(`userId` / `userModel`), funded by an `Admin` or `FleetManager` wallet
+(`senderId` / `senderModel`); only a fleet manager can request one through the API,
+and the automatic ones name the `SUPER_ADMIN` as sender. Covers a `startDate`–`endDate` window, carries
 `amount`, `paymentMethod` (`BANK_TRANSFER · MOBILE_BANKING · CASH`),
 `bankDetails`, `payoutProof`, and `status` ∈ `PENDING · PROCESSING · PAID`. A
 **partial unique index** on `{ userId, status: 'PENDING' }` enforces at most one
-open payout per user. The midnight payout cron creates these automatically.
+open payout per user. The midnight payout cron creates these automatically, but
+only when `payout.autoGenerate` is enabled in the global settings and the day is
+one of `payout.payoutDays`. Wallet creation, the payout steps and the ledger reads are in
+[Payouts, Wallets and Transactions](../10-payments/payouts-wallets-transactions.md).
 
 ```mermaid
 flowchart LR
@@ -230,7 +237,9 @@ reads: `delivery` pricing (tiered per-km rate, distance threshold, VAT),
 `commission` (`fleetManagerPercent`, `serviceCharge`, `serviceChargeVatRate`),
 `ingredientsOrder` charges, order rules, and referral milestones. Changing this
 document changes pricing for all *future* orders only — existing orders keep
-their snapshot. The platform commission is **not** stored here; see below.
+their snapshot. The platform commission is **not** stored here; see below. Every
+setting, its default and what reads it are listed in
+[Platform Settings](./platform-settings.md).
 
 ### Platform commission (effective-dated)
 
@@ -283,10 +292,12 @@ to a commission decision.
 The distance charge is **marginal**: the first `delivery.distanceThresholdKm`
 (default 5) are billed at `delivery.chargePerKm`, and only the km beyond the
 threshold at `delivery.chargePerKmBeyondThreshold` (falls back to
-`chargePerKm` when unset; send `null` to clear it). There is no fixed base charge. VAT is then added on
-top of the net charge.
+`chargePerKm` when unset; send `null` to clear it). A fixed `delivery.baseCharge`
+(default 0) is added to the result whenever the distance is above zero. VAT is
+then added on top of the net charge. See
+[Platform Settings](./platform-settings.md#delivery-and-service-pricing).
 
-Example with threshold 5 km, near rate 1.00, far rate 1.50: a 7 km order costs
+Example with base charge 0, threshold 5 km, near rate 1.00, far rate 1.50: a 7 km order costs
 5 × 1.00 + 2 × 1.50 = 8.00 net. Pickup orders are always 0. If the Google
 distance lookup fails, checkout is rejected with `DISTANCE_CALCULATION_FAILED`
 rather than pricing the delivery at 0.
@@ -296,7 +307,7 @@ rather than pricing the delivery at 0.
 | Collection | Written by | Purpose |
 | --- | --- | --- |
 | `LoginHistory` | `auth-queue` worker | Login / logout audit |
-| `ActivityLog` | services via `createActivityLog` | Business-event trail; pruned by the 03:00 retention cron |
+| `ActivityLog` | services via `createActivityLog` | Business-event trail; archived, then deleted, by the 03:00 retention cron. See [Activity Logs](../12-activity-logs/activity-logs.md) |
 | `ErrorLog` | `globalErrorHandler` | Every `5xx`, with sensitive fields redacted |
 | `EmailLog` | `emailSender` | Outbound email record |
 | `Notification` | notification service | In-app notification feed (paginated with QueryBuilder) |

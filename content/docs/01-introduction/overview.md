@@ -22,10 +22,10 @@ VAT rates, fiscal e-invoicing, and payment rails are Portugal-specific.
 | Identity & access | Registration, OTP/email verification, login (password, customer OTP, Google/Facebook social), JWT sessions with per-device tracking, RBAC + admin permissions, legal-agreement e-signing gate |
 | Catalog | Vendors/branches, products with variations and add-ons, categories, ingredients, Meilisearch-backed food search |
 | Ordering | Cart, checkout summary, payment intent, order creation, vendor accept/reject/prepare, delivery-partner dispatch and tracking, self-pickup with pickup codes, delivery OTP, reorder, cancellation/refund |
-| Money | Wallets, transactions ledger, payouts to vendors/riders/fleet managers, platform commission & service charge, coupons/offers, loyalty points, referrals |
-| Fulfilment support | Zones, taxes, global settings, ratings, support tickets, SOS alerts, sponsorships |
+| Money | [Wallets, transactions ledger, payouts](../10-payments/payouts-wallets-transactions.md) to vendors/riders/fleet managers, platform commission & service charge, [offers](../09-offers-and-coupons/offers.md) (a coupon can be earned as a referral reward but [cannot be redeemed](../09-offers-and-coupons/coupons.md)), loyalty points, referrals |
+| Fulfilment support | [Zones](../02-platform/platform-settings.md#zones) (stored configuration on vendors/branches and customer addresses; not used for dispatch matching or delivery-price calculation, which are radius- and distance-based; sponsorship targeting does use them), taxes, [global settings](../02-platform/platform-settings.md), ratings, [support tickets](../02-platform/support.md), [SOS alerts](../02-platform/sos.md), [sponsorships](../02-platform/sponsorships.md) |
 | Fiscal | Order invoice sync and PDF retrieval via the Pasta Digital e-invoicing service |
-| Platform ops | Notifications (push/email/SMS), analytics, activity log, login history, error log, AI product-description generation |
+| Platform ops | Notifications (push/email/SMS), [analytics](../02-platform/analytics.md), activity log, login history, error log, AI product-description generation |
 
 ## Actors and roles
 
@@ -65,7 +65,7 @@ parent (`ROLE_COLLECTION_MAP`), distinguished by `role` and `parentVendorId`.
 | PDF | Puppeteer + Handlebars (agreements, invoices) |
 | Maps | Google Maps (distance / geocoding) |
 | AI | OpenAI (`openai.responses.create`) for product descriptions |
-| Resilience | `opossum` circuit breakers wrap every outbound third-party call |
+| Resilience | `opossum` circuit breakers wrap the payment, invoicing, maps, push, email, SMS and social-token calls; Meilisearch, OpenAI and RustFS/S3 calls are not wrapped |
 
 ## Request lifecycle at a glance
 
@@ -110,9 +110,9 @@ flowchart TD
 | --- | --- |
 | **Cart** | Browse / search the catalog and add items (`/carts`). |
 | **Checkout** | `POST /checkout` builds and stores a checkout summary. |
-| **Payment** | A RedUniq payment intent is created against the summary; the gateway confirms through its notification webhook. |
-| **Order creation** | `POST /orders/create-order` writes the `Order` and its payout math, then enqueues `NEW_ORDER_POST_PROCESS`. |
-| **Dispatch** | Vendor accepts and prepares. For delivery, `broadcast-order` moves the order to `DISPATCHING` for a rider pool; for pickup it becomes `READY_FOR_PICKUP`. |
+| **Payment** | A RedUniq payment intent is created against the summary; the gateway result is confirmed by the client's `create-order` call, by the notification webhook, or (saved card) in the same request. See [Payments](../10-payments/payments.md). |
+| **Order creation** | The `Order` and its payout math are written once, by whichever confirmation path verifies the payment first (`POST /orders/create-order`, the webhook, or `pay-with-saved-token`), then `NEW_ORDER_POST_PROCESS` is enqueued. |
+| **Dispatch** | Vendor accepts and prepares. For delivery, the auto-dispatch cron (or a vendor `broadcast-order`) moves the order to `DISPATCHING` for a rider pool; for pickup it becomes `READY_FOR_PICKUP`. |
 | **Delivery or pickup** | Rider: picked up → on the way → delivered (delivery OTP). Pickup: the customer collects with the pickup code. |
 | **Completion and invoice** | `Transaction` ledger rows and a `Wallet` credit, later batched into a `Payout`; the fiscal invoice syncs through Pasta Digital. |
 
